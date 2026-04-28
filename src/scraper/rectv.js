@@ -1,9 +1,6 @@
-/**
- * RecTV_v18_Final_Fix
- .
- */
-
-var cheerio = require("cheerio-without-node-native");
+/* --- scraper/rectv.js --- */
+// BILGI NOTU: Render (Node.js) ortamında fetch yerleşik olarak gelir. 
+// Cheerio'ya bu dosya içinde şu an ihtiyaç duyulmuyor ama kalsın dersen require kalsın.
 
 var BASE_URL = "https://a.prectv70.lol";
 var SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
@@ -54,10 +51,19 @@ function analyzeStream(url, index, itemLabel) {
     return info;
 }
 
-export async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+// DİKKAT: index.js 'getStreams(type, id)' şeklinde çağırıyor.
+// Parametreleri buna göre karşılıyoruz.
+export async function getStreams(mediaType, id) {
     try {
+        // BILGI NOTU: ID'yi parçalayarak tmdbId, season ve episode'u alıyoruz.
+        const parts = id.split(':');
+        const tmdbId = parts[0];
+        const seasonNum = parts[1] || null;
+        const episodeNum = parts[2] || null;
+
         const isMovie = (mediaType === 'movie');
         const tmdbUrl = `https://api.themoviedb.org/3/${isMovie ? 'movie' : 'tv'}/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`;
+        
         const tmdbRes = await fetch(tmdbUrl);
         const tmdbData = await tmdbRes.json();
         
@@ -89,20 +95,14 @@ export async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
         for (let target of allItems) {
             const targetTitleLower = target.title.toLowerCase().trim();
             const searchTitleLower = trTitle.toLowerCase().trim();
-            const orgTitleLower = orgTitle.toLowerCase().trim();
+            const orgTitleLower = (orgTitle || "").toLowerCase().trim();
             let isMatch = false;
 
             if (isMovie) {
-                // --- FİLM İÇİN NET HARF SAYISI VE TAM EŞLEŞME ---
-                // Hedef başlık, aradığımız başlıktan daha uzunsa direkt elenir.
-                const isLengthOk = targetTitleLower.length <= searchTitleLower.length + 2; // +2 pay (yıl vs. için)
+                const isLengthOk = targetTitleLower.length <= searchTitleLower.length + 5;
                 const isExact = targetTitleLower === searchTitleLower || targetTitleLower === orgTitleLower;
-                
-                // Eğer tam eşleşmiyorsa bile en azından içermeli ama uzun olmamalı
                 isMatch = isExact || (targetTitleLower.includes(searchTitleLower) && isLengthOk);
-                
             } else {
-                // --- DİZİ İÇİN SENİN ÇALIŞAN ESKİ YAPIN ---
                 if (searchTitleLower === "from") {
                     isMatch = (targetTitleLower === "from" || targetTitleLower === "from dizi");
                 } else {
@@ -116,7 +116,7 @@ export async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
             if (isMovie && isActuallySerie) continue;
             if (!isMovie && !isActuallySerie) continue;
 
-            if (isActuallySerie) {
+            if (isActuallySerie && seasonNum) {
                 const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
                 const seasons = await seasonRes.json();
                 for (let s of seasons) {
@@ -128,11 +128,9 @@ export async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                                 (ep.sources || []).forEach((src, idx) => {
                                     const streamInfo = analyzeStream(src.url, idx, ep.label || s.title || target.label);
                                     finalResults.push({
-                                        name: trTitle, 
-                                        title: `⌜ RECTV ⌟ | Kaynak ${idx + 1} | ${streamInfo.icon} ${streamInfo.text}`,
-                                        url: src.url,
-                                        quality: "Auto",
-                                        headers: { 'User-Agent': 'googleusercontent', 'Referer': 'https://twitter.com/', 'Accept-Encoding': 'identity' }
+                                        name: "RECTV",
+                                        title: `⌜ Kaynak ${idx + 1} ⌟ | ${streamInfo.icon} ${streamInfo.text}`,
+                                        url: src.url
                                     });
                                 });
                             }
@@ -150,20 +148,18 @@ export async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
                 movieSources.forEach((src, idx) => {
                     const streamInfo = analyzeStream(src.url, idx, target.label);
                     finalResults.push({
-                        name: trTitle,
-                        title: `⌜ RECTV ⌟ | Kaynak ${idx + 1} | ${streamInfo.icon} ${streamInfo.text}`,
-                        url: src.url,
-                        quality: "Auto",
-                        headers: { 'User-Agent': 'googleusercontent', 'Referer': 'https://twitter.com/', 'Accept-Encoding': 'identity' }
+                        name: "RECTV",
+                        title: `⌜ Kaynak ${idx + 1} ⌟ | ${streamInfo.icon} ${streamInfo.text}`,
+                        url: src.url
                     });
                 });
             }
         }
 
+        // Dublikatları temizle
         return finalResults.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
     } catch (err) { 
+        console.error("Scraper Hatası:", err.message);
         return []; 
     }
 }
-
-module.exports = { getStreams };
