@@ -1,24 +1,23 @@
 {
-  "name": "rectv-stremio-ultimate",
-  "version": "4.8.1",
-  "description": "RecTV Pro Ultimate eklentisi (film + dizi + tv)",
+  "name": "sinewix-addon",
+  "version": "1.1.0",
+  "description": "Sinewix Stremio eklentisi",
   "main": "src/index.js",
-  "type": "module",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "NODE_ENV=development node src/index.js"
+    "start": "node index.js"
   },
   "keywords": [
     "stremio",
     "addon",
-    "rectv"
+    "streaming",
+    "turkish",
+    "series"
   ],
-  "author": "MoOnCrOwN",
+  "author": "",
   "license": "MIT",
-  "engines": {
-    "node": ">=18"
-  },
   "dependencies": {
+    "node-fetch": "^3.3.2",
     "stremio-addon-sdk": "^1.6.10"
-  }
+  },
+  "type": "module"
 }
