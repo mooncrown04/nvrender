@@ -1,3 +1,9 @@
+/**
+ * RECTV Pro Ultimate - Scraper Engine
+ * Bilgi Notu: Bu dosya hem Canlı TV hem de Film/Dizi içeriklerini 
+ * RecTV API'sinden dinamik olarak kazır.
+ */
+
 /* --- 1. AYARLAR VE API TANIMLARI --- */
 const BASE_URL = "https://a.prectv70.lol";
 const SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
@@ -13,6 +19,7 @@ let cachedToken = null;
 
 /* --- 2. YARDIMCI FONKSİYONLAR --- */
 
+// RecTV Auth Token Alıcı
 async function getAuthToken() {
     if (cachedToken) return cachedToken;
     try {
@@ -23,9 +30,13 @@ async function getAuthToken() {
             cachedToken = json.accessToken || text.trim();
         } catch (e) { cachedToken = text.trim(); }
         return cachedToken;
-    } catch (e) { return null; }
+    } catch (e) { 
+        console.error("Auth Token Hatası:", e);
+        return null; 
+    }
 }
 
+// Yayın Türü Analiz Edici (Dublaj/Altyazı)
 function analyzeStream(url, index, itemLabel) {
     const lowUrl = url.toLowerCase();
     const lowLabel = (itemLabel || "").toLowerCase();
@@ -55,8 +66,44 @@ function analyzeStream(url, index, itemLabel) {
 
 export async function getStreams(type, id) {
     try {
+        const token = await getAuthToken();
+        const searchHeaders = Object.assign({}, HEADERS, { 'Authorization': 'Bearer ' + token });
+
+        /* --- DURUM A: CANLI TV (CH_ ve _ Temizliği) --- */
+        if (id.startsWith("CH_") || type === 'tv') {
+            // Katalog için bizim eklediğimiz "CH_" ve "_" işaretlerini temizle
+            const cleanName = id.replace("CH_", "").split('_').join(' ').trim();
+            
+            // Temiz isimle RecTV'de ara
+            const sRes = await fetch(`${BASE_URL}/api/search/${encodeURIComponent(cleanName)}/${SW_KEY}/`, { headers: searchHeaders });
+            const sData = await sRes.json();
+            
+            const channels = sData.channels || [];
+            // Tam eşleşme ara, yoksa ilk sonucu al
+            const found = channels.find(c => 
+                (c.title || c.name).toLowerCase().trim() === cleanName.toLowerCase()
+            ) || channels[0]; 
+
+            if (found) {
+                const res = await fetch(`${BASE_URL}/api/channel/${found.id}/${SW_KEY}/`, { headers: searchHeaders });
+                const data = await res.json();
+                
+                if (!data.sources || data.sources.length === 0) {
+                    console.error("Ham Veri Hatası: Kanal kaynağı boş döndü -> " + cleanName);
+                }
+
+                return (data.sources || []).map((src, idx) => ({
+                    name: "RECTV",
+                    title: `📺 ${found.title} - Kaynak ${idx + 1}`,
+                    url: src.url,
+                    behaviorHints: { notWebReady: true }
+                }));
+            }
+            return [];
+        }
+
+        /* --- DURUM B: FİLM VE DİZİ (IMDb ID - tt... formatı) --- */
         const isMovie = (type === 'movie');
-        // id formatı tt12345 veya tt12345:1:1 olabilir. Sadece tt kısmını alalım.
         const tmdbImdbId = id.split(':')[0]; 
         const seasonNum = id.split(':')[1] || 1;
         const episodeNum = id.split(':')[2] || 1;
@@ -72,10 +119,7 @@ export async function getStreams(type, id) {
         const trTitle = (result.title || result.name || "").trim();
         const orgTitle = (result.original_title || result.original_name || "").trim();
 
-        const token = await getAuthToken();
-        const searchHeaders = Object.assign({}, HEADERS, { 'Authorization': 'Bearer ' + token });
-        
-        // 2. Arama Sorgularını Hazırla
+        // 2. RecTV'de Arama Sorgularını Çalıştır
         let searchQueries = [trTitle];
         if (orgTitle && orgTitle !== trTitle) searchQueries.push(orgTitle);
 
@@ -84,9 +128,9 @@ export async function getStreams(type, id) {
             const searchUrl = `${BASE_URL}/api/search/${encodeURIComponent(q)}/${SW_KEY}/`;
             const sRes = await fetch(searchUrl, { headers: searchHeaders });
             const sData = await sRes.json();
-            const found = (sData.series || []).concat(sData.posters || []);
-            if (found.length > 0) {
-                allItems = allItems.concat(found);
+            const foundItems = (sData.series || []).concat(sData.posters || []);
+            if (foundItems.length > 0) {
+                allItems = allItems.concat(foundItems);
                 if (isMovie) break; 
             }
         }
@@ -97,26 +141,18 @@ export async function getStreams(type, id) {
             const targetTitleLower = target.title.toLowerCase().trim();
             const searchTitleLower = trTitle.toLowerCase().trim();
             const orgTitleLower = orgTitle.toLowerCase().trim();
-            let isMatch = false;
-
-            // Eşleşme Kontrolü
-            if (isMovie) {
-                const isLengthOk = targetTitleLower.length <= searchTitleLower.length + 5; 
-                const isExact = targetTitleLower === searchTitleLower || targetTitleLower === orgTitleLower;
-                isMatch = isExact || (targetTitleLower.includes(searchTitleLower) && isLengthOk);
-            } else {
-                isMatch = targetTitleLower.includes(searchTitleLower) || targetTitleLower.includes(orgTitleLower);
-            }
-
+            
+            // İsim Eşleşme Kontrolü
+            const isMatch = targetTitleLower.includes(searchTitleLower) || targetTitleLower.includes(orgTitleLower);
             if (!isMatch) continue;
 
-            // Tip Kontrolü
+            // Tip Kontrolü (Dizi ise dizi, film ise film olmalı)
             const isActuallySerie = target.type === "serie" || (target.label && target.label.toLowerCase().includes("dizi"));
             if (isMovie && isActuallySerie) continue;
             if (!isMovie && !isActuallySerie) continue;
 
-            // 3. İçerik Kaynaklarını Çek
             if (isActuallySerie) {
+                // DİZİ İÇİN BÖLÜM KAZIMA
                 const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
                 const seasons = await seasonRes.json();
                 for (let s of seasons) {
@@ -126,10 +162,10 @@ export async function getStreams(type, id) {
                             let epNumber = parseInt(ep.title.match(/\d+/) || 0);
                             if (epNumber == episodeNum) {
                                 (ep.sources || []).forEach((src, idx) => {
-                                    const streamInfo = analyzeStream(src.url, idx, ep.label || s.title);
+                                    const info = analyzeStream(src.url, idx, ep.label || s.title);
                                     finalResults.push({
                                         name: `RECTV`,
-                                        title: `Kaynak ${idx + 1} | ${streamInfo.icon} ${streamInfo.text}`,
+                                        title: `${info.icon} ${info.text} - Kaynak ${idx + 1}`,
                                         url: src.url
                                     });
                                 });
@@ -138,24 +174,25 @@ export async function getStreams(type, id) {
                     }
                 }
             } else {
+                // FİLM İÇİN KAYNAK KAZIMA
                 const detRes = await fetch(`${BASE_URL}/api/movie/${target.id}/${SW_KEY}/`, { headers: searchHeaders });
                 const detData = await detRes.json();
                 (detData.sources || []).forEach((src, idx) => {
-                    const streamInfo = analyzeStream(src.url, idx, target.label);
+                    const info = analyzeStream(src.url, idx, target.label);
                     finalResults.push({
                         name: `RECTV`,
-                        title: `Kaynak ${idx + 1} | ${streamInfo.icon} ${streamInfo.text}`,
+                        title: `${info.icon} ${info.text} - Kaynak ${idx + 1}`,
                         url: src.url
                     });
                 });
             }
         }
 
-        // Tekrar eden URL'leri temizle ve döndür
+        // Tekrar eden linkleri temizle ve döndür
         return finalResults.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
 
     } catch (err) { 
-        console.error("Scraper Hatası:", err);
+        console.error("Kritik Scraper Hatası:", err);
         return []; 
     }
 }
