@@ -1,11 +1,9 @@
+/* --- 1. BAĞIMLILIKLAR VE AYARLAR --- */
 const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
 const { BASE_URL, getCatalog, getMeta, getStreams } = require('./scraper/hdfilmizle');
 
-/* --- Bilgi: Render ve Dış Bağlantı Ayarları --- */
 const ADDON_ID = process.env.ADDON_ID || 'org.hdfilmizle.scraper';
 const ADDON_NAME = process.env.ADDON_NAME || 'HDfilmizle Scraper';
-
-// Bilgi: Render kendi portunu 'process.env.PORT' üzerinden gönderir
 const PORT = Number(process.env.PORT || 7000);
 
 // Bilgi: BASE_ENDPOINT artık statik 127.0.0.1 olmamalı. 
