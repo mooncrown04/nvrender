@@ -4,7 +4,7 @@
   "description": "RecTV API tabanlı Film ve Dizi eklentisi",
   "main": "src/index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node src/index.js"
   },
   "keywords": [
     "stremio",
