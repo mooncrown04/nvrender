@@ -54,7 +54,7 @@ function analyzeStream(url, index, itemLabel) {
     return info;
 }
 
-async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
+export async function getStreams(tmdbId, mediaType, seasonNum, episodeNum) {
     try {
         const isMovie = (mediaType === 'movie');
         const tmdbUrl = `https://api.themoviedb.org/3/${isMovie ? 'movie' : 'tv'}/${tmdbId}?language=tr-TR&api_key=4ef0d7355d9ffb5151e987764708ce96`;
