@@ -1,26 +1,24 @@
 {
-  "name": "hdfilmizle-stremio",
-  "version": "1.0.0",
-  "description": "hdfilmizle.to için Stremio eklentisi (film + dizi + stream)",
+  "name": "rectv-stremio-ultimate",
+  "version": "4.8.1",
+  "description": "RecTV Pro Ultimate eklentisi (film + dizi + tv)",
   "main": "src/index.js",
-  "type": "commonjs",
+  "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "NODE_ENV=development node src/index.js",
-    "lint": "node --check src/index.js && node --check src/scraper/hdfilmizle.js"
+    "dev": "NODE_ENV=development node src/index.js"
   },
   "keywords": [
     "stremio",
     "addon",
-    "hdfilmizle"
+    "rectv"
   ],
-  "author": "",
+  "author": "MoOnCrOwN",
   "license": "MIT",
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "cheerio": "^1.0.0",
     "stremio-addon-sdk": "^1.6.10"
   }
 }
