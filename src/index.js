@@ -1,7 +1,7 @@
 /* --- 1. ADIM: BAĞIMLILIKLAR --- */
 import pkg from 'stremio-addon-sdk';
 const { addonBuilder, serveHTTP } = pkg;
-import fetch from 'node-fetch';
+import { getCatalog, getMeta, getStreams } from './scraper/rectv.js';
 
 /* --- 2. ADIM: AYARLAR VE SABİTLER --- */
 const PORT = process.env.PORT || 7010;
