@@ -1,10 +1,27 @@
 const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
 const { BASE_URL, getCatalog, getMeta, getStreams } = require('./scraper/hdfilmizle');
 
+/* --- Bilgi: Render ve Dış Bağlantı Ayarları --- */
 const ADDON_ID = process.env.ADDON_ID || 'org.hdfilmizle.scraper';
 const ADDON_NAME = process.env.ADDON_NAME || 'HDfilmizle Scraper';
+
+// Bilgi: Render kendi portunu 'process.env.PORT' üzerinden gönderir
 const PORT = Number(process.env.PORT || 7000);
-const BASE_ENDPOINT = process.env.BASE_ENDPOINT || `http://127.0.0.1:${PORT}`;
+
+// Bilgi: BASE_ENDPOINT artık statik 127.0.0.1 olmamalı. 
+// Render'ın size verdiği URL'yi buraya otomatik çeker.
+const BASE_ENDPOINT = process.env.BASE_ENDPOINT || `https://${process.env.RENDER_EXTERNAL_HOSTNAME || 'localhost'}`;
+/* --------------------------------------------- */
+
+// ... (Kataloğu ve diğer handler'ları buraya ekliyorsun)
+
+/* --- Bilgi: Sunucuyu Başlatma --- */
+serveHTTP(builder.getInterface(), { 
+    port: PORT, 
+    hostname: '0.0.0.0' // Bilgi: Firestick ve dış dünyadan erişim için kritik
+});
+
+console.log(`✅ ${ADDON_NAME} yayında: ${PORT} portu dinleniyor.`);
 
 const manifest = {
   id: ADDON_ID,
