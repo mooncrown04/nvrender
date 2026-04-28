@@ -8,19 +8,18 @@ const SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a304
 
 const COMMON_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-    'Accept': 'application/json',
-    'Referer': 'https://twitter.com/',
-    'hash256': '711bff4afeb47f07ab08a0b07e85d3835e739295e8a6361db77eebd93d96306b'
+    'Accept': 'application/json'
 };
 
+// BILGI NOTU: Stremio-RecTV Entegrasyonu Başlatılıyor.
 const manifest = {
-    id: "com.mooncrown.rectv.v2",
-    version: "2.0.0",
-    name: "MOONCROWN RECTV",
-    description: "RecTV API tabanlı Film ve Dizi eklentisi",
+    id: "com.mooncrown.rectv.final",
+    version: "2.1.0",
+    name: "RECTV Pro",
+    description: "RecTV API tabanlı Film ve Dizi eklentisi (Final Fix)",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series"],
-    idPrefixes: ["rectv_"], // Karışıklığı önlemek için özel prefix
+    idPrefixes: ["rectv_"],
     catalogs: [
         { id: "rc_movie", type: "movie", name: "RECTV Filmler", extra: [{ name: "search" }] },
         { id: "rc_series", type: "series", name: "RECTV Diziler", extra: [{ name: "search" }] }
@@ -29,7 +28,6 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
-// Yardımcı: Token Alımı (Sinewix'teki gibi otomatik)
 async function getAuthToken() {
     try {
         const res = await fetch(`${BASE_URL}/api/attest/nonce`, { headers: COMMON_HEADERS });
@@ -45,20 +43,18 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
         const token = await getAuthToken();
         const headers = { ...COMMON_HEADERS, 'Authorization': `Bearer ${token}` };
         
-        let url = "";
-        if (extra?.search) {
-            url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
-        } else {
-            const path = type === 'movie' ? 'movie' : 'serie';
-            url = `${BASE_URL}/api/${path}/by/filtres/0/created/0/${SW_KEY}/`;
-        }
+        let url = extra?.search 
+            ? `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`
+            : `${BASE_URL}/api/${type === 'movie' ? 'movie' : 'serie'}/by/filtres/0/created/0/${SW_KEY}/`;
 
         const res = await fetch(url, { headers });
         const data = await res.json();
-        const items = type === 'movie' ? (data.posters || data) : (data.series || data);
+        
+        // HATA DUZELTME: API'den gelen farklı veri yapılarını kontrol et
+        const items = data.posters || data.series || (Array.isArray(data) ? data : []);
 
-        const metas = (Array.isArray(items) ? items : []).map(item => ({
-            id: `rectv_${type}_${item.id}`, // Örn: rectv_movie_123
+        const metas = items.map(item => ({
+            id: `rectv_${type}_${item.id}`,
             type: type,
             name: item.title || item.name,
             poster: item.image || item.thumbnail
@@ -70,40 +66,56 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 
 // META HANDLER
 builder.defineMetaHandler(async ({ type, id }) => {
-    const internalId = id.replace(`rectv_${type}_`, "");
+    const internalId = id.split('_').pop();
     try {
         const token = await getAuthToken();
         const headers = { ...COMMON_HEADERS, 'Authorization': `Bearer ${token}` };
         
-        const path = type === 'movie' ? 'movie' : 'season/by/serie';
-        const res = await fetch(`${BASE_URL}/api/${path}/${internalId}/${SW_KEY}/`, { headers });
+        const endpoint = type === 'movie' 
+            ? `${BASE_URL}/api/movie/${internalId}/${SW_KEY}/`
+            : `${BASE_URL}/api/season/by/serie/${internalId}/${SW_KEY}/`;
+
+        const res = await fetch(endpoint, { headers });
         const data = await res.json();
 
         if (type === 'movie') {
-            return { meta: { id, type, name: data.title, poster: data.image, description: data.description } };
+            return {
+                meta: {
+                    id,
+                    type: 'movie',
+                    name: data.title || "Film",
+                    poster: data.image,
+                    background: data.image,
+                    description: data.description || ""
+                }
+            };
         } else {
-            // Dizi için sezonları/bölümleri Sinewix formatında hazırla
             const videos = [];
-            data.forEach(season => {
+            const seasons = Array.isArray(data) ? data : [];
+            seasons.forEach(season => {
                 const sNum = parseInt(season.title.match(/\d+/) || 1);
-                season.episodes.forEach(ep => {
+                (season.episodes || []).forEach(ep => {
                     const eNum = parseInt(ep.title.match(/\d+/) || 1);
                     videos.push({
                         id: `${id}:${sNum}:${eNum}`,
-                        title: ep.title,
+                        title: ep.title || `${eNum}. Bölüm`,
                         season: sNum,
-                        episode: eNum
+                        episode: eNum,
+                        released: new Date().toISOString()
                     });
                 });
             });
-            return { meta: { id, type, name: "Dizi Detayı", videos } };
+            return { meta: { id, type: 'series', name: "Dizi Detayı", videos } };
         }
-    } catch (e) { return { meta: {} }; }
+    } catch (e) { 
+        console.error("Meta Error:", e);
+        return { meta: {} }; 
+    }
 });
 
-// STREAM HANDLER (Kazıyıcı mantığı burada çalışır)
+// STREAM HANDLER
 builder.defineStreamHandler(async ({ id }) => {
-    // ID Formatı: rectv_series_123:1:5 veya rectv_movie_123
+    // BILGI NOTU: Link yakalanıyor...
     const parts = id.split(':');
     const baseId = parts[0]; 
     const sNum = parts[1];
@@ -119,10 +131,13 @@ builder.defineStreamHandler(async ({ id }) => {
         if (type === 'movie') {
             const res = await fetch(`${BASE_URL}/api/movie/${internalId}/${SW_KEY}/`, { headers });
             const data = await res.json();
-            streams = (data.sources || []).map((src, i) => ({
+            const sources = data.sources || [];
+            
+            streams = sources.map((src, i) => ({
                 name: "RECTV",
-                title: `Kaynak ${i + 1}`,
-                url: src.url
+                title: `Kaynak ${i + 1}\n${src.quality || 'HD'}`,
+                url: src.url,
+                behaviorHints: { notWebReady: true, proxyHeaders: { "Referer": "https://twitter.com/" } }
             }));
         } else {
             const res = await fetch(`${BASE_URL}/api/season/by/serie/${internalId}/${SW_KEY}/`, { headers });
@@ -132,12 +147,16 @@ builder.defineStreamHandler(async ({ id }) => {
             
             streams = (episode?.sources || []).map((src, i) => ({
                 name: "RECTV",
-                title: `Kaynak ${i + 1}`,
-                url: src.url
+                title: `Kaynak ${i + 1}\n${src.quality || 'HD'}`,
+                url: src.url,
+                behaviorHints: { notWebReady: true, proxyHeaders: { "Referer": "https://twitter.com/" } }
             }));
         }
         return { streams };
-    } catch (e) { return { streams: [] }; }
+    } catch (e) { 
+        console.error("Stream Error:", e);
+        return { streams: [] }; 
+    }
 });
 
 serveHTTP(builder.getInterface(), { port: PORT });
