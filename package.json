@@ -1,7 +1,7 @@
 {
-  "name": "sinewix-addon",
-  "version": "1.1.0",
-  "description": "Sinewix Stremio eklentisi",
+  "name": "rectv-pro-addon",
+  "version": "3.0.0",
+  "description": "RecTV API tabanlı Film ve Dizi eklentisi",
   "main": "src/index.js",
   "scripts": {
     "start": "node index.js"
@@ -9,11 +9,12 @@
   "keywords": [
     "stremio",
     "addon",
+    "rectv",
     "streaming",
     "turkish",
-    "series"
+    "mooncrown"
   ],
-  "author": "",
+  "author": "MoOnCrOwN",
   "license": "MIT",
   "dependencies": {
     "node-fetch": "^3.3.2",
