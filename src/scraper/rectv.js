@@ -1,5 +1,3 @@
-const { load } = require('cheerio');
-
 /* --- 1. AYARLAR VE API TANIMLARI --- */
 const BASE_URL = "https://a.prectv70.lol";
 const SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
@@ -13,7 +11,7 @@ const HEADERS = {
 
 let cachedToken = null;
 
-/* --- 2. YARDIMCI FONKSİYONLAR (Önceki Dosyandan Gelen Standartlar) --- */
+/* --- 2. YARDIMCI FONKSİYONLAR --- */
 
 async function getAuthToken() {
     if (cachedToken) return cachedToken;
@@ -62,10 +60,10 @@ function analyzeStream(url, index, itemLabel) {
     return info;
 }
 
-/* --- 3. ANA FONKSİYONLAR (STREMIO UYUMLU) --- */
+/* --- 3. ANA FONKSİYONLAR (EXPORT EKLENDİ) --- */
 
-async function getCatalog(type, search = '') {
-    if (!search) return []; // RecTV API genellikle arama odaklıdır, boş aramada popülerleri dönebilirsiniz
+export async function getCatalog(type, search = '') {
+    if (!search) return [];
 
     const token = await getAuthToken();
     const searchHeaders = Object.assign({}, HEADERS, { 'Authorization': 'Bearer ' + token });
@@ -79,8 +77,6 @@ async function getCatalog(type, search = '') {
         return found.map(item => {
             const isSerie = item.type === "serie" || (item.label && item.label.toLowerCase().includes("dizi"));
             const currentType = isSerie ? "series" : "movie";
-            
-            // Sadece istenen kategoriye ait olanları göster
             if (currentType !== type) return null;
 
             return {
@@ -95,22 +91,20 @@ async function getCatalog(type, search = '') {
     } catch (e) { return []; }
 }
 
-async function getMeta(type, id) {
+export async function getMeta(type, id) {
     const parsed = parseMetaId(id);
     if (!parsed) return null;
 
-    // RecTV detay API'si genellikle Stream aşamasında kullanıldığı için 
-    // Katalogdan gelen veriyi basitçe meta olarak dönebiliriz.
     return {
         id: id,
         type: type,
         name: parsed.title,
-        poster: null, // Detay sayfasından çekilebilir
+        poster: null,
         description: `${parsed.title} içeriğini izlemek için kaynakları kontrol edin.`
     };
 }
 
-async function getStreams(type, id) {
+export async function getStreams(type, id) {
     const parsed = parseMetaId(id);
     if (!parsed) return [];
 
@@ -132,13 +126,9 @@ async function getStreams(type, id) {
                 });
             });
         } else {
-            // Dizi için Sezon/Bölüm mantığı (Stremio'dan gelen ek bilgi gerektirir)
-            // Not: Stremio meta id içinden sezon/bölüm bilgisini çekmek için index.js'den 
-            // gelen ek parametreleri kullanmak daha sağlıklıdır.
             const seasonRes = await fetch(`${BASE_URL}/api/season/by/serie/${parsed.targetId}/${SW_KEY}/`, { headers: searchHeaders });
             const seasons = await seasonRes.json();
             
-            // Örnek: İlk sezonun ilk bölümünü döner (Basitleştirilmiş)
             if (seasons[0] && seasons[0].episodes[0]) {
                 const ep = seasons[0].episodes[0];
                 (ep.sources || []).forEach((src, idx) => {
@@ -154,10 +144,3 @@ async function getStreams(type, id) {
         return finalResults;
     } catch (e) { return []; }
 }
-
-module.exports = {
-    BASE_URL,
-    getCatalog,
-    getMeta,
-    getStreams
-};
