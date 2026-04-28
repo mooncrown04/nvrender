@@ -6,27 +6,15 @@ const ADDON_ID = process.env.ADDON_ID || 'org.hdfilmizle.scraper';
 const ADDON_NAME = process.env.ADDON_NAME || 'HDfilmizle Scraper';
 const PORT = Number(process.env.PORT || 7000);
 
-// Bilgi: BASE_ENDPOINT artık statik 127.0.0.1 olmamalı. 
-// Render'ın size verdiği URL'yi buraya otomatik çeker.
+// Bilgi: Render'ın dış URL'sini otomatik algılar
 const BASE_ENDPOINT = process.env.BASE_ENDPOINT || `https://${process.env.RENDER_EXTERNAL_HOSTNAME || 'localhost'}`;
-/* --------------------------------------------- */
 
-// ... (Kataloğu ve diğer handler'ları buraya ekliyorsun)
-
-/* --- Bilgi: Sunucuyu Başlatma --- */
-serveHTTP(builder.getInterface(), { 
-    port: PORT, 
-    hostname: '0.0.0.0' // Bilgi: Firestick ve dış dünyadan erişim için kritik
-});
-
-console.log(`✅ ${ADDON_NAME} yayında: ${PORT} portu dinleniyor.`);
-
+/* --- 2. MANIFEST TANIMLAMASI --- */
 const manifest = {
   id: ADDON_ID,
   version: '1.0.0',
   name: ADDON_NAME,
-  description:
-    'hdfilmizle.to üzerinden film ve dizi katalogu + stream sağlayan community eklentisi.',
+  description: 'hdfilmizle.to üzerinden film ve dizi katalogu + stream sağlayan community eklentisi.',
   resources: ['catalog', 'meta', 'stream'],
   types: ['movie', 'series'],
   idPrefixes: ['hdfilmizle:movie:', 'hdfilmizle:series:'],
@@ -50,16 +38,13 @@ const manifest = {
   },
 };
 
+/* --- 3. BUILDER OLUŞTURMA (KRİTİK: DİĞERLERİNDEN ÖNCE OLMALI) --- */
 const builder = new addonBuilder(manifest);
 
+/* --- 4. HANDLER TANIMLAMALARI --- */
 builder.defineCatalogHandler(async ({ type, id, extra = {} }) => {
-  if (!['movie', 'series'].includes(type)) {
-    return { metas: [] };
-  }
-
-  if (!['hdfilmizle-movies', 'hdfilmizle-series'].includes(id)) {
-    return { metas: [] };
-  }
+  if (!['movie', 'series'].includes(type)) return { metas: [] };
+  if (!['hdfilmizle-movies', 'hdfilmizle-series'].includes(id)) return { metas: [] };
 
   try {
     const metas = await getCatalog(type, extra.search || '');
@@ -71,9 +56,7 @@ builder.defineCatalogHandler(async ({ type, id, extra = {} }) => {
 });
 
 builder.defineMetaHandler(async ({ type, id }) => {
-  if (!id?.startsWith(`hdfilmizle:${type}:`)) {
-    return { meta: null };
-  }
+  if (!id?.startsWith(`hdfilmizle:${type}:`)) return { meta: null };
 
   try {
     const meta = await getMeta(type, id);
@@ -85,9 +68,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
 });
 
 builder.defineStreamHandler(async ({ type, id }) => {
-  if (!id?.startsWith(`hdfilmizle:${type}:`)) {
-    return { streams: [] };
-  }
+  if (!id?.startsWith(`hdfilmizle:${type}:`)) return { streams: [] };
 
   try {
     const streams = await getStreams(type, id);
@@ -98,7 +79,12 @@ builder.defineStreamHandler(async ({ type, id }) => {
   }
 });
 
-serveHTTP(builder.getInterface(), { port: PORT });
+/* --- 5. SUNUCUYU BAŞLATMA (EN SONDA OLMALI) --- */
+// Bilgi: hostname '0.0.0.0' eklenerek dış erişim açıldı.
+serveHTTP(builder.getInterface(), { 
+    port: PORT, 
+    hostname: '0.0.0.0' 
+});
 
 console.log(`✅ ${ADDON_NAME} çalışıyor: ${BASE_ENDPOINT}/manifest.json`);
 console.log(`🌍 Kaynak: ${BASE_URL}`);
