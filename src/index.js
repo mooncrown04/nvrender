@@ -7,56 +7,52 @@ const PORT = process.env.PORT || 7010;
 const BASE_URL = "https://a.prectv70.lol";
 const SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
 
-// 🔥 KRİTİK HEADER (eksik olursa API boş döner)
 const HEADERS = {
     'User-Agent': 'Mozilla/5.0',
-    'Accept': 'application/json'
+    'Accept': 'application/json',
+    'hash256': '711bff4afeb47f07ab08a0b07e85d3835e739295e8a6361db77eebd93d96306b'
 };
 
 // ---------------- MANIFEST ----------------
 const manifest = {
-    id: "com.rectv.pro.v1",
+    id: "com.rectv.smart.pro",
     version: "1.0.0",
-    name: "RECTV PRO",
-    description: "Live TV + Movies + Series",
+    name: "RECTV Smart Pro",
+    description: "Stable RECTV Addon (Search-based streaming)",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
-
-    // 🔥 TV EKLENDİ
-    idPrefixes: ["CH_", "rectv_", "tt"],
+    idPrefixes: ["rectv", "CH_"],
 
     catalogs: [
-        {
-            id: "rectv_live",
-            type: "tv",
-            name: "📺 Canlı TV"
-        },
-        {
-            id: "rectv_movies",
-            type: "movie",
-            name: "🎬 Filmler"
-        },
-        {
-            id: "rectv_series",
-            type: "series",
-            name: "🍿 Diziler"
-        }
+        { id: "live", type: "tv", name: "📺 Canlı TV" },
+        { id: "movies", type: "movie", name: "🎬 Filmler", extra: [{ name: "search" }] },
+        { id: "series", type: "series", name: "🍿 Diziler", extra: [{ name: "search" }] }
     ]
 };
 
 const builder = new addonBuilder(manifest);
 
+// ---------------- HELPERS ----------------
+function cleanQuery(id) {
+    return id
+        .replace("rectv_movie_", "")
+        .replace("rectv_series_", "")
+        .replace(/_/g, " ");
+}
+
 // ---------------- CATALOG ----------------
 builder.defineCatalogHandler(async ({ id, type, extra }) => {
     try {
 
-        // 📺 LIVE TV
-        if (id === "rectv_live") {
-            const res = await fetch(`${BASE_URL}/api/channel/by/filtres/1/0/0/${SW_KEY}/`, { headers: HEADERS });
+        // LIVE TV
+        if (id === "live") {
+            const res = await fetch(`${BASE_URL}/api/channel/by/category/1/${SW_KEY}/`, { headers: HEADERS });
             const data = await res.json();
 
+            const items = data.channels || data.data || data || [];
+
             return {
-                metas: (data || []).map(ch => ({
+                metas: items.map(ch => ({
                     id: `CH_${ch.id}`,
                     type: "tv",
                     name: ch.title || ch.name,
@@ -66,7 +62,7 @@ builder.defineCatalogHandler(async ({ id, type, extra }) => {
             };
         }
 
-        // 🎬 MOVIES / SERIES
+        // MOVIE / SERIES
         const path = type === "series" ? "serie" : "movie";
 
         const url = extra?.search
@@ -76,11 +72,16 @@ builder.defineCatalogHandler(async ({ id, type, extra }) => {
         const res = await fetch(url, { headers: HEADERS });
         const data = await res.json();
 
-        const items = data?.posters || data?.series || data || [];
+        const items =
+            data.channels ||
+            data.series ||
+            data.posters ||
+            data.data ||
+            (Array.isArray(data) ? data : []);
 
         return {
-            metas: (items || []).slice(0, 30).map(item => ({
-                id: `rectv_${type}_${item.id}`,
+            metas: (items || []).slice(0, 25).map(item => ({
+                id: `rectv_${type}_${item.title || item.name}`,
                 type,
                 name: item.title || item.name,
                 poster: item.image || item.thumbnail
@@ -99,16 +100,17 @@ builder.defineMetaHandler(async ({ id, type }) => {
             id,
             type,
             name: "RECTV Content",
-            description: "Loaded"
+            description: "Smart loaded content"
         }
     };
 });
 
-// ---------------- STREAM ----------------
-builder.defineStreamHandler(async ({ id }) => {
+// ---------------- STREAM (CRITICAL FIX) ----------------
+builder.defineStreamHandler(async ({ id, type }) => {
 
     try {
 
+        // ---------------- LIVE TV ----------------
         if (id.startsWith("CH_")) {
             const res = await fetch(`${BASE_URL}/api/channel/${id.replace("CH_", "")}/${SW_KEY}/`, { headers: HEADERS });
             const data = await res.json();
@@ -121,14 +123,39 @@ builder.defineStreamHandler(async ({ id }) => {
             };
         }
 
-        const pure = id.replace("rectv_movie_", "").replace("rectv_series_", "");
+        // ---------------- SEARCH BASED STREAM ----------------
+        const query = cleanQuery(id);
 
-        const res = await fetch(`${BASE_URL}/api/movie/${pure}/${SW_KEY}/`, { headers: HEADERS });
-        const data = await res.json();
+        const searchRes = await fetch(
+            `${BASE_URL}/api/search/${encodeURIComponent(query)}/${SW_KEY}/`,
+            { headers: HEADERS }
+        );
+
+        const searchData = await searchRes.json();
+
+        const items =
+            searchData.channels ||
+            searchData.series ||
+            searchData.posters ||
+            searchData.data ||
+            [];
+
+        if (!items.length) return { streams: [] };
+
+        const match = items[0];
+
+        const detailUrl =
+            type === "series"
+                ? `${BASE_URL}/api/serie/${match.id}/${SW_KEY}/`
+                : `${BASE_URL}/api/movie/${match.id}/${SW_KEY}/`;
+
+        const detailRes = await fetch(detailUrl, { headers: HEADERS });
+        const detail = await detailRes.json();
 
         return {
-            streams: (data.sources || []).map(s => ({
+            streams: (detail.sources || []).map(s => ({
                 name: "RECTV",
+                title: s.title || "PLAY",
                 url: s.url
             }))
         };
