@@ -20,12 +20,23 @@ const PLAYER_HEADERS = {
 
 const manifest = {
     id: "com.mooncrown.rectv.bridge",
-    version: "12.0.0",
+    version: "12.1.0",
     name: "RECTV Bridge Mode",
     description: "Internal RECTV IDs with External IMDb/TMDB Export",
-    resources: ["catalog", "meta", "stream"],
+    resources: [
+        "catalog",
+        {
+            name: "meta",
+            types: ["movie", "series", "tv"],
+            idPrefixes: ["rectv_", "tt", "tmdb:", "CH_"]
+        },
+        {
+            name: "stream",
+            types: ["movie", "series", "tv"],
+            idPrefixes: ["rectv_", "tt", "tmdb:", "CH_"]
+        }
+    ],
     types: ["movie", "series", "tv"],
-    // Burası kritik: Hem kendi prefiximizi hem de standartları ekliyoruz
     idPrefixes: ["rectv_", "tt", "tmdb:", "CH_"],
     catalogs: [
         { id: "rc_live", type: "tv", name: "RECTV Canlı TV" },
@@ -44,23 +55,21 @@ async function getAuthToken() {
     } catch (e) { return null; }
 }
 
-// ID'leri hem içeride hem dışarıda kullanılabilir hale getiren ayıklayıcı
 function parseId(id) {
-    // 1. Dizi bölümleri: tt123:1:1 veya rectv_series_123:1:1
     const parts = id.split(':');
     const mainId = parts[0];
     
-    // 2. Tip ve Saf ID bulma
     let type = "movie";
-    if (mainId.startsWith("CH_") || id.includes("_tv_")) type = "tv";
-    if (id.includes("_series_") || parts.length > 1) type = "series";
+    if (mainId.startsWith("CH_") || mainId.includes("_tv_")) type = "tv";
+    else if (mainId.includes("_series_") || parts.length > 1) type = "series";
 
-    const cleanId = mainId.replace('rectv_movie_', '')
-                          .replace('rectv_series_', '')
-                          .replace('rectv_tv_', '')
-                          .replace('tmdb:', '')
-                          .replace('CH_', '')
-                          .replace('tt', '');
+    const cleanId = mainId
+        .replace('rectv_movie_', '')
+        .replace('rectv_series_', '')
+        .replace('rectv_tv_', '')
+        .replace('tmdb:', '')
+        .replace('CH_', '')
+        .replace('tt', '');
 
     return {
         type,
@@ -76,112 +85,191 @@ function parseId(id) {
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
     try {
         const token = await getAuthToken();
+        if (!token) return { metas: [] };
+        
         const authHeaders = { ...HEADERS, 'Authorization': `Bearer ${token}` };
         
         let url;
         if (id === "rc_live") {
             url = `${BASE_URL}/api/channel/by/category/1/${SW_KEY}/`;
+        } else if (id === "rc_movie") {
+            if (extra?.search) {
+                url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
+            } else {
+                url = `${BASE_URL}/api/movie/by/filtres/0/created/${extra?.skip || 0}/${SW_KEY}/`;
+            }
+        } else if (id === "rc_series") {
+            if (extra?.search) {
+                url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
+            } else {
+                url = `${BASE_URL}/api/serie/by/filtres/0/created/${extra?.skip || 0}/${SW_KEY}/`;
+            }
         } else {
-            url = extra?.search 
-                ? `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`
-                : `${BASE_URL}/api/${type === 'movie' ? 'movie' : 'serie'}/by/filtres/0/created/${extra?.skip || 0}/${SW_KEY}/`;
+            return { metas: [] };
         }
         
         const res = await fetch(url, { headers: authHeaders });
+        if (!res.ok) return { metas: [] };
+        
         const data = await res.json();
-        const items = data.channels || data.posters || data.series || (Array.isArray(data) ? data : []);
+        
+        // Farklı API yanıt yapılarını destekle
+        let items = [];
+        if (id === "rc_live") {
+            items = data.channels || data.data?.channels || data;
+        } else if (id === "rc_movie") {
+            items = data.posters || data.movies || data.data?.posters || data.data?.movies || data;
+        } else if (id === "rc_series") {
+            items = data.series || data.posters || data.data?.series || data.data?.posters || data;
+        }
+        
+        if (!Array.isArray(items)) items = [];
         
         return { 
             metas: items.map(item => {
-                // Eğer API'den gelen veride tt_id (imdb) varsa onu kullan, yoksa kendi ID'ni bas
-                // Bu sayede kazıyıcılar direkt tt_id üzerinden yakalayabilir
-                const externalId = item.imdb_id || item.tmdb_id; 
+                const externalId = item.imdb_id || item.tmdb_id;
+                const itemType = id === "rc_live" ? "tv" : (id === "rc_movie" ? "movie" : "series");
+                
                 return { 
-                    id: externalId ? (externalId.startsWith('tt') ? externalId : `tmdb:${externalId}`) : `rectv_${type}_${item.id}`, 
-                    type: type, 
-                    name: item.title || item.name, 
-                    poster: item.image || item.thumbnail,
-                    posterShape: type === 'tv' ? "landscape" : "poster"
+                    id: externalId ? (externalId.startsWith('tt') ? externalId : `tmdb:${externalId}`) : `rectv_${itemType}_${item.id}`, 
+                    type: itemType, 
+                    name: item.title || item.name || "Untitled", 
+                    poster: item.image || item.thumbnail || item.logo || "",
+                    posterShape: itemType === 'tv' ? "landscape" : "poster"
                 };
             }) 
         };
-    } catch (e) { return { metas: [] }; }
+    } catch (e) { 
+        console.error("Catalog error:", e);
+        return { metas: [] }; 
+    }
 });
 
 // 2. META HANDLER
 builder.defineMetaHandler(async ({ type, id }) => {
     const parsed = parseId(id);
-    const token = await getAuthToken();
-    const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
-
+    
     try {
+        const token = await getAuthToken();
+        if (!token) return { meta: null };
+        
+        const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
         let url;
-        // Eğer ID dışarıdan (tt...) geliyorsa önce kendi API'mizde aratıp ID'mizi bulmamız lazım
-        // Ama şimdilik senin katalogdan gelen "rectv_" id'lerini işleyelim:
-        if (id.startsWith('CH_') || id.includes('_tv_')) {
+        
+        if (type === 'tv' || id.startsWith('CH_') || id.includes('_tv_')) {
             url = `${BASE_URL}/api/channel/${parsed.cleanId}/${SW_KEY}/`;
         } else if (type === 'movie') {
             url = `${BASE_URL}/api/movie/${parsed.cleanId}/${SW_KEY}/`;
-        } else {
+        } else if (type === 'series') {
             url = `${BASE_URL}/api/season/by/serie/${parsed.cleanId}/${SW_KEY}/`;
+        } else {
+            return { meta: null };
         }
 
         const res = await fetch(url, { headers });
+        if (!res.ok) return { meta: null };
+        
         const data = await res.json();
 
         if (type === 'movie' || type === 'tv') {
             return { 
                 meta: { 
-                    id: id, // Gelen ID'yi koru (tt ise tt kalsın)
-                    type, 
-                    name: data.title || data.name, 
-                    poster: data.image || data.thumbnail, 
-                    background: data.image || data.thumbnail,
-                    // Dış kazıyıcılar için IMDb ID'sini meta içine gömüyoruz
+                    id: id,
+                    type: type, 
+                    name: data.title || data.name || "Untitled", 
+                    poster: data.image || data.thumbnail || data.logo || "", 
+                    background: data.image || data.thumbnail || data.logo || "",
+                    description: data.description || data.plot || "",
                     imdb_id: data.imdb_id || (id.startsWith('tt') ? id : null)
                 } 
             };
-        } else {
+        } else if (type === 'series') {
             const videos = [];
-            if (Array.isArray(data)) {
-                data.forEach(s => {
-                    const sNum = parseInt(s.title.match(/\d+/) || 1);
-                    s.episodes.forEach(ep => {
-                        const eNum = parseInt(ep.title.match(/\d+/) || 1);
-                        // Dizi bölümlerini de tt formatında export et
-                        const videoId = id.startsWith('tt') ? `${id}:${sNum}:${eNum}` : `${id}:${sNum}:${eNum}`;
-                        videos.push({ id: videoId, title: ep.title, season: sNum, episode: eNum });
+            const seasons = data.seasons || data;
+            
+            if (Array.isArray(seasons)) {
+                seasons.forEach((s, sIdx) => {
+                    const sNum = parseInt(s.title?.match(/\d+/)?.[0]) || (sIdx + 1);
+                    const episodes = s.episodes || [];
+                    
+                    episodes.forEach((ep, eIdx) => {
+                        const eNum = parseInt(ep.title?.match(/\d+/)?.[0]) || (eIdx + 1);
+                        const videoId = `${id}:${sNum}:${eNum}`;
+                        
+                        videos.push({ 
+                            id: videoId, 
+                            title: ep.title || `Episode ${eNum}`, 
+                            season: sNum, 
+                            episode: eNum 
+                        });
                     });
                 });
             }
-            return { meta: { id, type: 'series', name: "Dizi Detayı", videos } };
+            
+            return { 
+                meta: { 
+                    id: id, 
+                    type: 'series', 
+                    name: data.title || data.name || "Series", 
+                    poster: data.image || data.thumbnail || "",
+                    background: data.image || data.thumbnail || "",
+                    description: data.description || "",
+                    videos: videos 
+                } 
+            };
         }
-    } catch (e) { return { meta: {} }; }
+        
+        return { meta: null };
+    } catch (e) { 
+        console.error("Meta error:", e);
+        return { meta: null }; 
+    }
 });
 
 // 3. STREAM HANDLER
-builder.defineStreamHandler(async ({ id }) => {
+builder.defineStreamHandler(async ({ type, id }) => {
     const parsed = parseId(id);
-    const token = await getAuthToken();
-    const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
-
+    
     try {
+        const token = await getAuthToken();
+        if (!token) return { streams: [] };
+        
+        const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
         let sources = [];
-        // Stream kısmında mecburen kendi API'mize saf ID ile gitmeliyiz
-        if (parsed.type === 'tv') {
+        
+        if (parsed.type === 'tv' || type === 'tv') {
             const res = await fetch(`${BASE_URL}/api/channel/${parsed.cleanId}/${SW_KEY}/`, { headers });
-            const data = await res.json();
-            sources = data.sources || (data.url ? [{ url: data.url }] : []);
+            if (res.ok) {
+                const data = await res.json();
+                sources = data.sources || (data.url ? [{ url: data.url }] : []);
+            }
         } else if (!parsed.season) {
             const res = await fetch(`${BASE_URL}/api/movie/${parsed.cleanId}/${SW_KEY}/`, { headers });
-            const data = await res.json();
-            sources = data.sources || [];
+            if (res.ok) {
+                const data = await res.json();
+                sources = data.sources || [];
+            }
         } else {
             const res = await fetch(`${BASE_URL}/api/season/by/serie/${parsed.cleanId}/${SW_KEY}/`, { headers });
-            const data = await res.json();
-            const season = data.find(s => (s.title.match(/\d+/) || [])[0] == parsed.season);
-            const episode = season?.episodes.find(e => (e.title.match(/\d+/) || [])[0] == parsed.episode);
-            sources = episode?.sources || [];
+            if (res.ok) {
+                const data = await res.json();
+                const seasons = data.seasons || data;
+                
+                if (Array.isArray(seasons)) {
+                    const season = seasons.find(s => {
+                        const sNum = parseInt(s.title?.match(/\d+/)?.[0]);
+                        return sNum === parsed.season;
+                    });
+                    
+                    if (season?.episodes) {
+                        const episode = season.episodes.find(e => {
+                            const eNum = parseInt(e.title?.match(/\d+/)?.[0]);
+                            return eNum === parsed.episode;
+                        });
+                        sources = episode?.sources || [];
+                    }
+                }
+            }
         }
 
         return {
@@ -189,10 +277,17 @@ builder.defineStreamHandler(async ({ id }) => {
                 name: "RECTV",
                 title: "Oynat",
                 url: src.url,
-                behaviorHints: { notWebReady: true, proxyHeaders: { "request": PLAYER_HEADERS } }
+                behaviorHints: { 
+                    notWebReady: true, 
+                    proxyHeaders: { "request": PLAYER_HEADERS } 
+                }
             }))
         };
-    } catch (e) { return { streams: [] }; }
+    } catch (e) { 
+        console.error("Stream error:", e);
+        return { streams: [] }; 
+    }
 });
 
 serveHTTP(builder.getInterface(), { port: PORT });
+console.log(`RECTV Bridge Mode running on port ${PORT}`);
