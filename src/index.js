@@ -19,13 +19,14 @@ const PLAYER_HEADERS = {
 };
 
 const manifest = {
-    id: "com.mooncrown.rectv.v21",
-    version: "6.0.0",
-    name: "RECTV CH-Fix",
-    description: "CH_ Prefix ve Canlı TV Posterleri Aktif",
+    id: "com.mooncrown.rectv.v22",
+    version: "7.0.0",
+    name: "RECTV Multi-ID Fix",
+    description: "CH_, TMDB, TT ve RECTV ID uyumlu sistem",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
-    idPrefixes: ["rectv_", "tt", "CH_"], // CH_ Buraya eklendi
+    // tmdb buraya eklendi, böylece gelen istekleri eklenti üzerine alacak
+    idPrefixes: ["rectv_", "tt", "CH_", "tmdb"], 
     catalogs: [
         { id: "rc_live", type: "tv", name: "RECTV Canlı TV" },
         { id: "rc_movie", type: "movie", name: "RECTV Filmler", extra: [{ name: "search" }, { name: "skip" }] },
@@ -41,6 +42,15 @@ async function getAuthToken() {
         const json = await res.json();
         return json.accessToken || (await res.text()).trim();
     } catch (e) { return null; }
+}
+
+// Ortak ID Temizleyici: Tüm prefixleri (tmdb, CH, tt, rectv) temizleyip sadece ham sayısal ID'yi bırakır
+function getCleanId(id) {
+    return id.split(':').shift()        // Varsa :1:1 kısmını atar
+             .replace('tmdb:', '')      // tmdb: temizle
+             .replace('CH_', '')        // CH_ temizle
+             .replace('tt', '')         // tt temizle
+             .split('_').pop();         // rectv_movie_123 -> 123
 }
 
 // CATALOG
@@ -75,17 +85,17 @@ builder.defineCatalogHandler(async ({ type, extra }) => {
 
 // META
 builder.defineMetaHandler(async ({ type, id }) => {
-    // CH_ veya rectv_ veya tt_ temizleme
-    const cleanId = id.replace('CH_', '').split(':').shift().split('_').pop();
+    const cleanId = getCleanId(id);
     
     try {
         const token = await getAuthToken();
         const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
         
         let url;
+        // Canlı TV, Film veya Dizi ayrımı
         if (id.startsWith('CH_') || type === 'tv') {
             url = `${BASE_URL}/api/channel/${cleanId}/${SW_KEY}/`;
-        } else if (type === 'movie' || id.includes('_movie_')) {
+        } else if (type === 'movie' || id.includes('movie') || id.startsWith('tmdb:')) {
             url = `${BASE_URL}/api/movie/${cleanId}/${SW_KEY}/`;
         } else {
             url = `${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`;
@@ -94,9 +104,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
         const res = await fetch(url, { headers });
         const data = await res.json();
 
-        const isLiveOrMovie = type === 'movie' || type === 'tv' || id.startsWith('CH_');
-
-        if (isLiveOrMovie) {
+        if (type === 'movie' || type === 'tv' || id.startsWith('CH_')) {
             return { 
                 meta: { 
                     id: id, 
@@ -104,18 +112,20 @@ builder.defineMetaHandler(async ({ type, id }) => {
                     name: data.title || data.name, 
                     poster: data.image || data.thumbnail, 
                     background: data.image || data.thumbnail, 
-                    description: data.description || "RECTV İçerik" 
+                    description: data.description || "RECTV Content" 
                 } 
             };
         } else {
             const videos = [];
-            data.forEach(s => {
-                const sNum = parseInt(s.title.match(/\d+/) || 1);
-                s.episodes.forEach(ep => {
-                    const eNum = parseInt(ep.title.match(/\d+/) || 1);
-                    videos.push({ id: `${id}:${sNum}:${eNum}`, title: ep.title, season: sNum, episode: eNum });
+            if (Array.isArray(data)) {
+                data.forEach(s => {
+                    const sNum = parseInt(s.title.match(/\d+/) || 1);
+                    s.episodes.forEach(ep => {
+                        const eNum = parseInt(ep.title.match(/\d+/) || 1);
+                        videos.push({ id: `${id}:${sNum}:${eNum}`, title: ep.title, season: sNum, episode: eNum });
+                    });
                 });
-            });
+            }
             return { meta: { id, type: 'series', name: "Dizi Detayı", videos } };
         }
     } catch (e) { return { meta: {} }; }
@@ -124,7 +134,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
 // STREAM
 builder.defineStreamHandler(async ({ id }) => {
     const parts = id.split(':');
-    const cleanId = parts[0].replace('CH_', '').split('_').pop();
+    const cleanId = getCleanId(parts[0]);
     const token = await getAuthToken();
     const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
 
@@ -135,10 +145,12 @@ builder.defineStreamHandler(async ({ id }) => {
             const data = await res.json();
             sources = data.sources || (data.url ? [{ url: data.url }] : []);
         } else if (!id.includes(':')) {
+            // Film / TMDB film araması
             const res = await fetch(`${BASE_URL}/api/movie/${cleanId}/${SW_KEY}/`, { headers });
             const data = await res.json();
             sources = data.sources || [];
         } else {
+            // Dizi
             const res = await fetch(`${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`, { headers });
             const data = await res.json();
             const season = data.find(s => (s.title.match(/\d+/) || [])[0] == parts[1]);
@@ -148,7 +160,7 @@ builder.defineStreamHandler(async ({ id }) => {
 
         return {
             streams: sources.map(src => ({
-                name: id.startsWith('CH_') ? "RECTV LIVE" : "RECTV",
+                name: "RECTV",
                 title: "Kaynak",
                 url: src.url,
                 behaviorHints: { notWebReady: true, proxyHeaders: { "request": PLAYER_HEADERS } }
