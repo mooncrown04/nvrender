@@ -12,23 +12,17 @@ const HEADERS = {
     'Accept': 'application/json'
 };
 
-const PLAYER_HEADERS = {
-    'User-Agent': 'googleusercontent',
-    'Referer': 'https://twitter.com/',
-    'Accept-Encoding': 'identity'
-};
-
 const manifest = {
-    id: "com.mooncrown.rectv.v18.ultimate",
-    version: "4.5.0",
-    name: "RECTV Pro",
-    description: "Canlı TV ve Film Detay Fix",
+    id: "com.mooncrown.rectv.v20.pro",
+    version: "6.0.0",
+    name: "RECTV Ultimate",
+    description: "Film, Dizi ve Canlı TV - Scraper Entegreli",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
     idPrefixes: ["rectv_"],
     catalogs: [
-        { id: "rc_movie", type: "movie", name: "RECTV Filmler", extra: [{ name: "search" }, { name: "skip" }] },
-        { id: "rc_series", type: "series", name: "RECTV Diziler", extra: [{ name: "search" }, { name: "skip" }] },
+        { id: "rc_movie", type: "movie", name: "RECTV Filmler", extra: [{ name: "search" }] },
+        { id: "rc_series", type: "series", name: "RECTV Diziler", extra: [{ name: "search" }] },
         { id: "rc_tv", type: "tv", name: "RECTV Canlı TV" }
     ]
 };
@@ -44,42 +38,40 @@ async function getAuthToken() {
     } catch (e) { return null; }
 }
 
-// CATALOG HANDLER - Canlı TV kategorilerini kanallara döküyoruz
+// CATALOG HANDLER - Canlı TV ve Arama Düzeltildi
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
+    const token = await getAuthToken();
+    const authHeaders = { ...HEADERS, 'Authorization': `Bearer ${token}` };
+    let url;
+
+    if (type === 'tv') {
+        url = `${BASE_URL}/api/category/all/channel/${SW_KEY}/`;
+    } else if (extra && extra.search) {
+        url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
+    } else {
+        const path = type === 'movie' ? 'movie' : 'serie';
+        url = `${BASE_URL}/api/${path}/by/filtres/0/created/0/${SW_KEY}/`;
+    }
+
     try {
-        const token = await getAuthToken();
-        const authHeaders = { ...HEADERS, 'Authorization': `Bearer ${token}` };
-        let url;
-
-        if (type === 'tv') {
-            url = `${BASE_URL}/api/category/all/channel/${SW_KEY}/`;
-        } else if (extra?.search) {
-            url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
-        } else {
-            const path = type === 'movie' ? 'movie' : 'serie';
-            url = `${BASE_URL}/api/${path}/by/filtres/0/created/${extra?.skip || 0}/${SW_KEY}/`;
-        }
-
         const res = await fetch(url, { headers: authHeaders });
         const data = await res.json();
         let metas = [];
 
         if (type === 'tv') {
-            // RecTV'de kanallar kategoriler içinde dizi (array) olarak gelir
-            if (Array.isArray(data)) {
-                data.forEach(cat => {
-                    if (cat.channels) {
-                        cat.channels.forEach(ch => {
-                            metas.push({
-                                id: `rectv_tv_${ch.id}`,
-                                type: 'tv',
-                                name: ch.title || ch.name,
-                                poster: ch.image || ch.thumbnail
-                            });
+            // TV Kategorilerini Düzleştir
+            data.forEach(cat => {
+                if (cat.channels) {
+                    cat.channels.forEach(ch => {
+                        metas.push({
+                            id: `rectv_tv_${ch.id}`,
+                            type: 'tv',
+                            name: ch.title || ch.name,
+                            poster: ch.image || ch.thumbnail
                         });
-                    }
-                });
-            }
+                    });
+                }
+            });
         } else {
             const items = data.posters || data.series || (Array.isArray(data) ? data : []);
             metas = items.map(item => ({
@@ -93,25 +85,21 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     } catch (e) { return { metas: [] }; }
 });
 
-// META HANDLER - Film detay sayfasının gelmeme sorunu burada çözüldü
+// META HANDLER - Meta sayfasına geçişi sağlayan ana motor
 builder.defineMetaHandler(async ({ type, id }) => {
     const internalId = id.split('_').pop();
     
     if (type === 'tv') {
-        return { meta: { id, type, name: "Canlı Yayın", poster: "https://i.ibb.co/rt6L58P/tv.png" } };
+        return { meta: { id, type: 'tv', name: "Canlı Kanal", poster: "https://i.ibb.co/rt6L58P/tv.png" } };
     }
 
     try {
         const token = await getAuthToken();
         const authHeaders = { ...HEADERS, 'Authorization': `Bearer ${token}` };
-        const url = type === 'movie' 
-            ? `${BASE_URL}/api/movie/${internalId}/${SW_KEY}/` 
-            : `${BASE_URL}/api/season/by/serie/${internalId}/${SW_KEY}/`;
-
-        const res = await fetch(url, { headers: authHeaders });
-        const data = await res.json();
-
+        
         if (type === 'movie') {
+            const res = await fetch(`${BASE_URL}/api/movie/${internalId}/${SW_KEY}/`, { headers: authHeaders });
+            const data = await res.json();
             return {
                 meta: {
                     id: id,
@@ -120,11 +108,13 @@ builder.defineMetaHandler(async ({ type, id }) => {
                     poster: data.image,
                     background: data.image,
                     description: data.description,
-                    // ÖNEMLİ: Filmde de bir video nesnesi olması Stremio'nun 'Oynat' tetiklemesini sağlar
-                    videos: [{ id: id, title: data.title }] 
+                    // BURASI KRİTİK: Filmde 'videos' olmazsa 'Oynat' çıkmaz
+                    videos: [{ id: id, title: data.title }]
                 }
             };
         } else {
+            const res = await fetch(`${BASE_URL}/api/season/by/serie/${internalId}/${SW_KEY}/`, { headers: authHeaders });
+            const data = await res.json();
             const videos = [];
             data.forEach(s => {
                 const sNum = parseInt(s.title.match(/\d+/) || 1);
@@ -138,18 +128,18 @@ builder.defineMetaHandler(async ({ type, id }) => {
                     });
                 });
             });
-            return { meta: { id, type: 'series', name: data[0]?.title || "Dizi", videos } };
+            return { meta: { id, type: 'series', name: "Dizi Detayı", videos } };
         }
-    } catch (e) { return { meta: {} }; }
+    } catch (e) { return { meta: { id, type, name: "Yüklenemedi" } }; }
 });
 
-// STREAM HANDLER
+// STREAM HANDLER - Linklerin son durağı
 builder.defineStreamHandler(async ({ id }) => {
     const parts = id.split(':');
     const idParts = parts[0].split('_');
     const typePart = idParts[1];
-    const internalId = idParts[2];
-    
+    const internalId = idParts.pop();
+
     try {
         const token = await getAuthToken();
         const authHeaders = { ...HEADERS, 'Authorization': `Bearer ${token}` };
@@ -160,12 +150,12 @@ builder.defineStreamHandler(async ({ id }) => {
             const res = await fetch(`${BASE_URL}/api/${endpoint}/${SW_KEY}/`, { headers: authHeaders });
             const data = await res.json();
             sources = data.sources || [];
-        } else if (typePart === 'series') {
+        } else {
             const res = await fetch(`${BASE_URL}/api/season/by/serie/${internalId}/${SW_KEY}/`, { headers: authHeaders });
             const data = await res.json();
             const season = data.find(s => parseInt(s.title.match(/\d+/)) == parts[1]);
-            const episode = season?.episodes.find(e => parseInt(e.title.match(/\d+/)) == parts[2]);
-            sources = episode?.sources || [];
+            const ep = season?.episodes.find(e => parseInt(e.title.match(/\d+/)) == parts[2]);
+            sources = ep?.sources || [];
         }
 
         return {
@@ -173,10 +163,7 @@ builder.defineStreamHandler(async ({ id }) => {
                 name: `RECTV ${typePart === 'tv' ? '📺' : '🎥'}`,
                 title: `${src.quality || 'Auto'} - Kaynak ${idx + 1}`,
                 url: src.url,
-                behaviorHints: {
-                    notWebReady: true,
-                    proxyHeaders: { "request": PLAYER_HEADERS }
-                }
+                behaviorHints: { notWebReady: true }
             }))
         };
     } catch (e) { return { streams: [] }; }
