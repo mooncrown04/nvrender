@@ -27,9 +27,9 @@ const YEARS = Array.from({ length: 30 }, (_, i) => (2026 - i).toString());
 
 export const manifest = {
     id: "com.nuvio.rectv.v481.full_complete",
-    version: "4.9.1",
+    version: "4.8.1",
     name: "RECTV Pro Ultimate",
-    description: "TV: Detaylı Meta | Film-Dizi: tt ID",
+    description: "TV: Detaylı Meta & Poster | Film-Dizi: tt ID",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
     idPrefixes: ["CH_", "tt"],
@@ -77,10 +77,13 @@ builder.defineCatalogHandler(async (args) => {
                 type: "tv", 
                 name: ch.title || ch.name, 
                 poster: ch.image, 
+                background: ch.image, // Katalogda da eklendi
+                logo: ch.image,       // Katalogda da eklendi
                 posterShape: "landscape",
                 genres: [ch.label || "Canlı TV"],
                 releaseInfo: "LIVE",
-                runtime: "Canlı Yayın"
+                runtime: "Canlı Yayın",
+                description: `${ch.title} kanalını RECTV üzerinden canlı izleyin.`
             })) };
         }
 
