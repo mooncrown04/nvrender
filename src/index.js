@@ -19,14 +19,13 @@ const PLAYER_HEADERS = {
 };
 
 const manifest = {
-    id: "com.mooncrown.rectv.final",
-    version: "4.0.0",
-    name: "RECTV Ultimate",
-    description: "Canlı TV, Film ve Dizi - Poster & Scraper Fix",
+    id: "com.mooncrown.rectv.v21",
+    version: "6.0.0",
+    name: "RECTV CH-Fix",
+    description: "CH_ Prefix ve Canlı TV Posterleri Aktif",
     resources: ["catalog", "meta", "stream"],
-    // TV ve Channel tipleri eklendi
-    types: ["movie", "series", "tv", "channel"],
-    idPrefixes: ["rectv_"],
+    types: ["movie", "series", "tv"],
+    idPrefixes: ["rectv_", "tt", "CH_"], // CH_ Buraya eklendi
     catalogs: [
         { id: "rc_live", type: "tv", name: "RECTV Canlı TV" },
         { id: "rc_movie", type: "movie", name: "RECTV Filmler", extra: [{ name: "search" }, { name: "skip" }] },
@@ -39,41 +38,34 @@ const builder = new addonBuilder(manifest);
 async function getAuthToken() {
     try {
         const res = await fetch(`${BASE_URL}/api/attest/nonce`, { headers: HEADERS });
-        const text = await res.text();
-        let token;
-        try {
-            const json = JSON.parse(text);
-            token = json.accessToken || text.trim();
-        } catch (e) { token = text.trim(); }
-        return token;
+        const json = await res.json();
+        return json.accessToken || (await res.text()).trim();
     } catch (e) { return null; }
 }
 
-// CATALOG HANDLER
-builder.defineCatalogHandler(async ({ type, id, extra }) => {
+// CATALOG
+builder.defineCatalogHandler(async ({ type, extra }) => {
     try {
         const token = await getAuthToken();
-        const searchHeaders = { ...HEADERS, 'Authorization': `Bearer ${token}` };
+        const authHeaders = { ...HEADERS, 'Authorization': `Bearer ${token}` };
         
         let url;
-        if (type === 'tv' || type === 'channel') {
-            url = `${BASE_URL}/api/channel/by/category/1/${SW_KEY}/`; // Örnek Canlı TV API yolu
+        if (type === 'tv') {
+            url = `${BASE_URL}/api/channel/by/category/1/${SW_KEY}/`;
         } else {
             url = extra?.search 
                 ? `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`
                 : `${BASE_URL}/api/${type === 'movie' ? 'movie' : 'serie'}/by/filtres/0/created/${extra?.skip || 0}/${SW_KEY}/`;
         }
         
-        const res = await fetch(url, { headers: searchHeaders });
+        const res = await fetch(url, { headers: authHeaders });
         const data = await res.json();
-        
-        // API'den gelen farklı anahtar isimlerini (posters, series, channels) standardize et
-        const items = data.posters || data.series || data || [];
+        const items = data.posters || data.series || (Array.isArray(data) ? data : []);
         
         return { 
             metas: items.map(item => ({ 
-                id: `rectv_${type}_${item.id}`, 
-                type, 
+                id: type === 'tv' ? `CH_${item.id}` : `rectv_${type}_${item.id}`, 
+                type: type, 
                 name: item.title || item.name, 
                 poster: item.image || item.thumbnail 
             })) 
@@ -81,30 +73,38 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     } catch (e) { return { metas: [] }; }
 });
 
-// META HANDLER (Poster ve Detay Sorunu Burada Çözüldü)
+// META
 builder.defineMetaHandler(async ({ type, id }) => {
-    const internalId = id.split('_').pop();
+    // CH_ veya rectv_ veya tt_ temizleme
+    const cleanId = id.replace('CH_', '').split(':').shift().split('_').pop();
+    
     try {
         const token = await getAuthToken();
         const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
         
-        // Canlı TV kanalı ise farklı API'ye git
-        const url = (type === 'tv' || type === 'channel') 
-            ? `${BASE_URL}/api/channel/${internalId}/${SW_KEY}/`
-            : (type === 'movie' ? `${BASE_URL}/api/movie/${internalId}/${SW_KEY}/` : `${BASE_URL}/api/season/by/serie/${internalId}/${SW_KEY}/`);
+        let url;
+        if (id.startsWith('CH_') || type === 'tv') {
+            url = `${BASE_URL}/api/channel/${cleanId}/${SW_KEY}/`;
+        } else if (type === 'movie' || id.includes('_movie_')) {
+            url = `${BASE_URL}/api/movie/${cleanId}/${SW_KEY}/`;
+        } else {
+            url = `${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`;
+        }
 
         const res = await fetch(url, { headers });
         const data = await res.json();
 
-        if (type === 'movie' || type === 'tv' || type === 'channel') {
+        const isLiveOrMovie = type === 'movie' || type === 'tv' || id.startsWith('CH_');
+
+        if (isLiveOrMovie) {
             return { 
                 meta: { 
-                    id, 
-                    type, 
+                    id: id, 
+                    type: type, 
                     name: data.title || data.name, 
                     poster: data.image || data.thumbnail, 
                     background: data.image || data.thumbnail, 
-                    description: data.description || "RECTV Canlı Yayın" 
+                    description: data.description || "RECTV İçerik" 
                 } 
             };
         } else {
@@ -116,49 +116,42 @@ builder.defineMetaHandler(async ({ type, id }) => {
                     videos.push({ id: `${id}:${sNum}:${eNum}`, title: ep.title, season: sNum, episode: eNum });
                 });
             });
-            return { meta: { id, type, name: "Dizi Detayı", videos } };
+            return { meta: { id, type: 'series', name: "Dizi Detayı", videos } };
         }
     } catch (e) { return { meta: {} }; }
 });
 
-// STREAM HANDLER (Kazıyıcı Bağlantısı ve Canlı TV Desteği)
+// STREAM
 builder.defineStreamHandler(async ({ id }) => {
     const parts = id.split(':');
-    const idParts = parts[0].split('_');
-    const internalId = idParts.pop();
-    const type = idParts.includes('movie') ? 'movie' : (idParts.includes('tv') || idParts.includes('channel') ? 'tv' : 'series');
-    
-    try {
-        const token = await getAuthToken();
-        const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
-        let sources = [];
+    const cleanId = parts[0].replace('CH_', '').split('_').pop();
+    const token = await getAuthToken();
+    const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
 
-        if (type === 'movie') {
-            const res = await fetch(`${BASE_URL}/api/movie/${internalId}/${SW_KEY}/`, { headers });
+    try {
+        let sources = [];
+        if (id.startsWith('CH_')) {
+            const res = await fetch(`${BASE_URL}/api/channel/${cleanId}/${SW_KEY}/`, { headers });
+            const data = await res.json();
+            sources = data.sources || (data.url ? [{ url: data.url }] : []);
+        } else if (!id.includes(':')) {
+            const res = await fetch(`${BASE_URL}/api/movie/${cleanId}/${SW_KEY}/`, { headers });
             const data = await res.json();
             sources = data.sources || [];
-        } else if (type === 'tv') {
-            const res = await fetch(`${BASE_URL}/api/channel/${internalId}/${SW_KEY}//`, { headers });
-            const data = await res.json();
-            // Canlı TV'de kaynaklar direkt "sources" içinde gelmeyebilir, URL'yi kontrol et
-            sources = data.sources || (data.url ? [{ url: data.url }] : []);
         } else {
-            const res = await fetch(`${BASE_URL}/api/season/by/serie/${internalId}/${SW_KEY}/`, { headers });
+            const res = await fetch(`${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`, { headers });
             const data = await res.json();
-            const season = data.find(s => parseInt(s.title.match(/\d+/)) == parts[1]);
-            const episode = season?.episodes.find(e => parseInt(e.title.match(/\d+/)) == parts[2]);
+            const season = data.find(s => (s.title.match(/\d+/) || [])[0] == parts[1]);
+            const episode = season?.episodes.find(e => (e.title.match(/\d+/) || [])[0] == parts[2]);
             sources = episode?.sources || [];
         }
 
         return {
-            streams: sources.map((src, idx) => ({
-                name: `RECTV ${type === 'tv' ? 'LIVE' : 'SOURCE'}`,
-                title: `Kaynak ${idx + 1}`,
+            streams: sources.map(src => ({
+                name: id.startsWith('CH_') ? "RECTV LIVE" : "RECTV",
+                title: "Kaynak",
                 url: src.url,
-                behaviorHints: {
-                    notWebReady: true,
-                    proxyHeaders: { "request": PLAYER_HEADERS }
-                }
+                behaviorHints: { notWebReady: true, proxyHeaders: { "request": PLAYER_HEADERS } }
             }))
         };
     } catch (e) { return { streams: [] }; }
