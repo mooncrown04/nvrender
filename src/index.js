@@ -5,7 +5,7 @@ import fetch from "node-fetch";
 const PORT = process.env.PORT || 7010;
 
 const BASE_URL = "https://a.prectv70.lol";
-cconst SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
+const SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
 const TMDB_KEY = "68e094699525b18a70bab2f86b1fa706";
 
 const FULL_HEADERS = {
