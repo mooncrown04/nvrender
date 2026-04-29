@@ -3,167 +3,221 @@ const { addonBuilder, serveHTTP } = pkg;
 import fetch from 'node-fetch';
 
 const PORT = process.env.PORT || 7010;
-
 const BASE_URL = "https://a.prectv70.lol";
 const SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
+const TMDB_KEY = "4ef0d7355d9ffb5151e987764708ce96";
 
 const HEADERS = {
-    'User-Agent': 'Mozilla/5.0',
-    'Accept': 'application/json',
-    'hash256': '711bff4afeb47f07ab08a0b07e85d3835e739295e8a6361db77eebd93d96306b'
+  'User-Agent': 'okhttp',
+  'Accept': 'application/json'
 };
 
-// ---------------- MANIFEST ----------------
-const manifest = {
-    id: "com.rectv.smart.pro",
-    version: "1.0.0",
-    name: "RECTV Smart Pro",
-    description: "Stable RECTV Addon (Search-based streaming)",
-    resources: ["catalog", "meta", "stream"],
-    types: ["movie", "series", "tv"],
-    idPrefixes: ["rectv", "CH_"],
+/* ---------------- ID PARSER ---------------- */
+function parseId(id) {
+  if (id.startsWith("CH_")) {
+    return {
+      type: "tv",
+      query: id.replace("CH_", "").replace(/_/g, " ")
+    };
+  }
 
-    catalogs: [
-        { id: "live", type: "tv", name: "📺 Canlı TV" },
-        { id: "movies", type: "movie", name: "🎬 Filmler", extra: [{ name: "search" }] },
-        { id: "series", type: "series", name: "🍿 Diziler", extra: [{ name: "search" }] }
-    ]
+  if (id.includes(":")) {
+    const [imdb, s, e] = id.split(":");
+    return {
+      type: "series",
+      imdb,
+      season: Number(s),
+      episode: Number(e)
+    };
+  }
+
+  return {
+    type: "movie",
+    imdb: id
+  };
+}
+
+/* ---------------- TMDB → NAME ---------------- */
+async function idToName(id) {
+  if (id.startsWith("CH_")) {
+    return id.replace("CH_", "").replace(/_/g, " ");
+  }
+
+  const imdb = id.split(":")[0];
+
+  try {
+    const res = await fetch(
+      `https://api.themoviedb.org/3/find/tt${imdb}?api_key=${TMDB_KEY}&external_source=imdb_id`
+    );
+    const data = await res.json();
+
+    const obj = data.movie_results?.[0] || data.tv_results?.[0];
+
+    return obj?.title || obj?.name || imdb;
+  } catch {
+    return imdb;
+  }
+}
+
+/* ---------------- RECTV SEARCH ---------------- */
+async function searchRECTV(query) {
+  const res = await fetch(
+    `${BASE_URL}/api/search/${encodeURIComponent(query)}/${SW_KEY}/`,
+    { headers: HEADERS }
+  );
+  const data = await res.json();
+  return data.channels || data.series || data.posters || [];
+}
+
+/* ---------------- MANIFEST ---------------- */
+const manifest = {
+  id: "com.rectv.hybrid.pro",
+  version: "1.0.0",
+  name: "RECTV Hybrid Pro",
+  resources: ["catalog", "meta", "stream"],
+  types: ["movie", "series", "tv"],
+  idPrefixes: ["rectv_", "CH_", "tt"]
 };
 
 const builder = new addonBuilder(manifest);
 
-// ---------------- HELPERS ----------------
-function cleanQuery(id) {
-    return id
-        .replace("rectv_movie_", "")
-        .replace("rectv_series_", "")
-        .replace(/_/g, " ");
-}
-
-// ---------------- CATALOG ----------------
+/* ---------------- CATALOG ---------------- */
 builder.defineCatalogHandler(async ({ id, type, extra }) => {
-    try {
 
-        // LIVE TV
-        if (id === "live") {
-            const res = await fetch(`${BASE_URL}/api/channel/by/category/1/${SW_KEY}/`, { headers: HEADERS });
-            const data = await res.json();
+  if (id === "rc_live") {
+    const q = extra?.search || "kanal";
+    const items = await searchRECTV(q);
 
-            const items = data.channels || data.data || data || [];
-
-            return {
-                metas: items.map(ch => ({
-                    id: `CH_${ch.id}`,
-                    type: "tv",
-                    name: ch.title || ch.name,
-                    poster: ch.image,
-                    posterShape: "landscape"
-                }))
-            };
-        }
-
-        // MOVIE / SERIES
-        const path = type === "series" ? "serie" : "movie";
-
-        const url = extra?.search
-            ? `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`
-            : `${BASE_URL}/api/${path}/by/filtres/0/created/0/${SW_KEY}/`;
-
-        const res = await fetch(url, { headers: HEADERS });
-        const data = await res.json();
-
-        const items =
-            data.channels ||
-            data.series ||
-            data.posters ||
-            data.data ||
-            (Array.isArray(data) ? data : []);
-
-        return {
-            metas: (items || []).slice(0, 25).map(item => ({
-                id: `rectv_${type}_${item.title || item.name}`,
-                type,
-                name: item.title || item.name,
-                poster: item.image || item.thumbnail
-            }))
-        };
-
-    } catch (e) {
-        return { metas: [] };
-    }
-});
-
-// ---------------- META ----------------
-builder.defineMetaHandler(async ({ id, type }) => {
     return {
-        meta: {
-            id,
-            type,
-            name: "RECTV Content",
-            description: "Smart loaded content"
-        }
+      metas: items.map(i => ({
+        id: `CH_${(i.title || i.name).replace(/\s+/g, "_")}`,
+        type: "tv",
+        name: i.title || i.name,
+        poster: i.image,
+        posterShape: "landscape"
+      }))
     };
+  }
+
+  const q = extra?.search || id.replace("rectv_", "");
+  const items = await searchRECTV(q);
+
+  return {
+    metas: items.map(i => {
+      const name = i.title || i.name;
+
+      return {
+        id: `rectv_${name.replace(/\s+/g, "_")}`,
+        type,
+        name,
+        poster: i.image
+      };
+    })
+  };
 });
 
-// ---------------- STREAM (CRITICAL FIX) ----------------
+/* ---------------- META ---------------- */
+builder.defineMetaHandler(async ({ id, type }) => {
+
+  const parsed = parseId(id);
+
+  if (parsed.type === "tv") {
+    return {
+      meta: {
+        id,
+        type: "tv",
+        name: parsed.query,
+        description: "Live TV"
+      }
+    };
+  }
+
+  const name = await idToName(id);
+
+  return {
+    meta: {
+      id,
+      type,
+      name,
+      description: "RECTV Content"
+    }
+  };
+});
+
+/* ---------------- STREAM ---------------- */
 builder.defineStreamHandler(async ({ id, type }) => {
 
-    try {
+  const parsed = parseId(id);
 
-        // ---------------- LIVE TV ----------------
-        if (id.startsWith("CH_")) {
-            const res = await fetch(`${BASE_URL}/api/channel/${id.replace("CH_", "")}/${SW_KEY}/`, { headers: HEADERS });
-            const data = await res.json();
+  /* ---------------- TV STREAM ---------------- */
+  if (parsed.type === "tv") {
 
-            return {
-                streams: (data.sources || []).map(s => ({
-                    name: "RECTV",
-                    url: s.url
-                }))
-            };
-        }
+    const items = await searchRECTV(parsed.query);
+    const ch = items[0];
 
-        // ---------------- SEARCH BASED STREAM ----------------
-        const query = cleanQuery(id);
+    if (!ch?.id) return { streams: [] };
 
-        const searchRes = await fetch(
-            `${BASE_URL}/api/search/${encodeURIComponent(query)}/${SW_KEY}/`,
-            { headers: HEADERS }
-        );
+    const res = await fetch(
+      `${BASE_URL}/api/channel/${ch.id}/${SW_KEY}/`,
+      { headers: HEADERS }
+    );
 
-        const searchData = await searchRes.json();
+    const data = await res.json();
 
-        const items =
-            searchData.channels ||
-            searchData.series ||
-            searchData.posters ||
-            searchData.data ||
-            [];
+    return {
+      streams: (data.sources || []).map(s => ({
+        name: "RECTV",
+        title: s.title,
+        url: s.url
+      }))
+    };
+  }
 
-        if (!items.length) return { streams: [] };
+  /* ---------------- MOVIE / SERIES STREAM ---------------- */
 
-        const match = items[0];
+  const name = await idToName(id);
 
-        const detailUrl =
-            type === "series"
-                ? `${BASE_URL}/api/serie/${match.id}/${SW_KEY}/`
-                : `${BASE_URL}/api/movie/${match.id}/${SW_KEY}/`;
+  const items = await searchRECTV(name);
+  const item = items[0];
 
-        const detailRes = await fetch(detailUrl, { headers: HEADERS });
-        const detail = await detailRes.json();
+  if (!item?.id) return { streams: [] };
 
-        return {
-            streams: (detail.sources || []).map(s => ({
-                name: "RECTV",
-                title: s.title || "PLAY",
-                url: s.url
-            }))
-        };
+  const path = parsed.type === "series" ? "serie" : "movie";
 
-    } catch (e) {
-        return { streams: [] };
-    }
+  const res = await fetch(
+    `${BASE_URL}/api/${path}/${item.id}/${SW_KEY}/`,
+    { headers: HEADERS }
+  );
+
+  const data = await res.json();
+
+  /* SERIES */
+  if (parsed.type === "series") {
+
+    const season = (data.seasons || [])
+      .find(s => s.season_number == parsed.season);
+
+    const ep = (season?.episodes || [])
+      .find(e => e.episode_number == parsed.episode);
+
+    return {
+      streams: (ep?.sources || []).map(s => ({
+        name: "RECTV",
+        title: s.title,
+        url: s.url
+      }))
+    };
+  }
+
+  /* MOVIE */
+  return {
+    streams: (data.sources || []).map(s => ({
+      name: "RECTV",
+      title: s.title,
+      url: s.url
+    }))
+  };
 });
 
-// ---------------- SERVER ----------------
+/* ---------------- SERVER ---------------- */
 serveHTTP(builder.getInterface(), { port: PORT });
