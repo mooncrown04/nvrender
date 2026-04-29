@@ -2,167 +2,166 @@ import pkg from 'stremio-addon-sdk';
 const { addonBuilder, serveHTTP } = pkg;
 import fetch from 'node-fetch';
 
-const PORT = 7010;
+const PORT = process.env.PORT || 7010;
 const BASE_URL = "https://a.prectv70.lol";
 const SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
-const TMDB_KEY = "4ef0d7355d9ffb5151e987764708ce96";
 
-// Linklerin açılması için hayati olan header seti
-const FULL_HEADERS = {
-    'User-Agent': 'okhttp/4.12.0',
-    'Accept': 'application/json',
-    'hash256': '711bff4afeb47f07ab08a0b07e85d3835e739295e8a6361db77eebd93d96306b',
-    'Connection': 'Keep-Alive'
+const HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+    'Referer': 'https://twitter.com/',
+    'Accept': 'application/json'
+};
+
+const PLAYER_HEADERS = {
+    'User-Agent': 'googleusercontent',
+    'Referer': 'https://twitter.com/',
+    'Accept-Encoding': 'identity'
 };
 
 const manifest = {
-    id: "com.nuvio.rectv.v11.final.fix",
-    version: "11.0.0",
-    name: "RECTV Pro Fixed",
-    description: "Canlı TV Poster + Dizi Kazıyıcı + Nuvio Sync",
+    id: "com.mooncrown.rectv.final",
+    version: "4.0.0",
+    name: "RECTV Ultimate",
+    description: "Canlı TV, Film ve Dizi - Poster & Scraper Fix",
     resources: ["catalog", "meta", "stream"],
-    types: ["movie", "series", "tv"],
-    idPrefixes: ["tt", "CH_"],
+    // TV ve Channel tipleri eklendi
+    types: ["movie", "series", "tv", "channel"],
+    idPrefixes: ["rectv_"],
     catalogs: [
-        { id: "rc_live", type: "tv", name: "📺 Canlı TV", extra: [{ name: "search" }] },
-        { id: "rc_movie", type: "movie", name: "🎬 Filmler", extra: [{ name: "search" }] },
-        { id: "rc_series", type: "series", name: "🍿 Diziler", extra: [{ name: "search" }] }
+        { id: "rc_live", type: "tv", name: "RECTV Canlı TV" },
+        { id: "rc_movie", type: "movie", name: "RECTV Filmler", extra: [{ name: "search" }, { name: "skip" }] },
+        { id: "rc_series", type: "series", name: "RECTV Diziler", extra: [{ name: "search" }, { name: "skip" }] }
     ]
 };
 
 const builder = new addonBuilder(manifest);
 
-// --- YARDIMCI ARAÇLAR ---
-const clean = (t) => t.replace(/HD|UHD|FHD|4K/gi, "").trim();
-
-async function getImdb(title, type) {
+async function getAuthToken() {
     try {
-        const sType = type === 'series' ? 'tv' : 'movie';
-        const url = `https://api.themoviedb.org/3/search/${sType}?api_key=${TMDB_KEY}&query=${encodeURIComponent(clean(title))}&language=tr-TR`;
-        const data = await (await fetch(url)).json();
-        if (data.results?.[0]) {
-            const ext = await (await fetch(`https://api.themoviedb.org/3/${sType}/${data.results[0].id}/external_ids?api_key=${TMDB_KEY}`)).json();
-            return ext.imdb_id;
-        }
-    } catch (e) {} return null;
+        const res = await fetch(`${BASE_URL}/api/attest/nonce`, { headers: HEADERS });
+        const text = await res.text();
+        let token;
+        try {
+            const json = JSON.parse(text);
+            token = json.accessToken || text.trim();
+        } catch (e) { token = text.trim(); }
+        return token;
+    } catch (e) { return null; }
 }
 
-// --- 1. KATALOG HANDLER (CANLI TV POSTERİ BURADA SABİT) ---
+// CATALOG HANDLER
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
     try {
-        if (id === "rc_live") {
-            const url = extra.search ? `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/` : `${BASE_URL}/api/channel/by/filtres/3/0/0/${SW_KEY}/`;
-            const data = await (await fetch(url, { headers: FULL_HEADERS })).json();
-            const channels = extra.search ? (data.channels || []) : data;
-            
-            return {
-                metas: channels.map(ch => ({
-                    id: `CH_${clean(ch.title || ch.name).replace(/\s+/g, '_')}`,
-                    type: "tv",
-                    name: clean(ch.title || ch.name),
-                    poster: ch.image, // POSTER ATAMASI: Burası asla değişmeyecek
-                    posterShape: "landscape"
-                }))
-            };
+        const token = await getAuthToken();
+        const searchHeaders = { ...HEADERS, 'Authorization': `Bearer ${token}` };
+        
+        let url;
+        if (type === 'tv' || type === 'channel') {
+            url = `${BASE_URL}/api/channel/by/category/1/${SW_KEY}/`; // Örnek Canlı TV API yolu
+        } else {
+            url = extra?.search 
+                ? `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`
+                : `${BASE_URL}/api/${type === 'movie' ? 'movie' : 'serie'}/by/filtres/0/created/${extra?.skip || 0}/${SW_KEY}/`;
         }
-
-        const path = type === 'series' ? 'serie' : 'movie';
-        const url = extra.search ? `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/` : `${BASE_URL}/api/${path}/by/filtres/0/created/0/${SW_KEY}/`;
-        const data = await (await fetch(url, { headers: FULL_HEADERS })).json();
-        const items = extra.search ? (type === 'series' ? data.series : data.posters) : (Array.isArray(data) ? data : data.posters || []);
-
-        const metas = await Promise.all((items || []).slice(0, 15).map(async (item) => {
-            const imdb = await getImdb(item.title || item.name, type);
-            if (!imdb) return null;
-            return {
-                id: type === 'series' ? `${imdb}:1:1` : imdb,
-                type: type,
-                name: item.title || item.name,
-                poster: item.image || item.thumbnail
-            };
-        }));
-        return { metas: metas.filter(m => m !== null) };
+        
+        const res = await fetch(url, { headers: searchHeaders });
+        const data = await res.json();
+        
+        // API'den gelen farklı anahtar isimlerini (posters, series, channels) standardize et
+        const items = data.posters || data.series || data || [];
+        
+        return { 
+            metas: items.map(item => ({ 
+                id: `rectv_${type}_${item.id}`, 
+                type, 
+                name: item.title || item.name, 
+                poster: item.image || item.thumbnail 
+            })) 
+        };
     } catch (e) { return { metas: [] }; }
 });
 
-// --- 2. META HANDLER ---
+// META HANDLER (Poster ve Detay Sorunu Burada Çözüldü)
 builder.defineMetaHandler(async ({ type, id }) => {
-    if (id.startsWith("CH_")) {
-        const name = id.replace("CH_", "").replace(/_/g, " ");
-        return { meta: { id, type: 'tv', name: name, posterShape: 'landscape' }};
-    }
+    const internalId = id.split('_').pop();
     try {
-        const pureId = id.split(':')[0];
-        const res = await fetch(`https://api.themoviedb.org/3/find/${pureId}?api_key=${TMDB_KEY}&external_source=imdb_id&language=tr-TR`);
+        const token = await getAuthToken();
+        const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
+        
+        // Canlı TV kanalı ise farklı API'ye git
+        const url = (type === 'tv' || type === 'channel') 
+            ? `${BASE_URL}/api/channel/${internalId}/${SW_KEY}/`
+            : (type === 'movie' ? `${BASE_URL}/api/movie/${internalId}/${SW_KEY}/` : `${BASE_URL}/api/season/by/serie/${internalId}/${SW_KEY}/`);
+
+        const res = await fetch(url, { headers });
         const data = await res.json();
-        const obj = type === 'series' ? data.tv_results?.[0] : data.movie_results?.[0];
-        const meta = {
-            id, type, name: obj.name || obj.title,
-            poster: `https://image.tmdb.org/t/p/w500${obj.poster_path}`,
-            background: `https://image.tmdb.org/t/p/original${obj.backdrop_path}`,
-            description: obj.overview,
-            videos: []
-        };
-        if (type === 'series') {
-            const detail = await (await fetch(`https://api.themoviedb.org/3/tv/${obj.id}?api_key=${TMDB_KEY}&language=tr-TR`)).json();
-            detail.seasons?.filter(s => s.season_number > 0).forEach(s => {
-                for (let i = 1; i <= s.episode_count; i++) {
-                    meta.videos.push({ id: `${pureId}:${s.season_number}:${i}`, title: `S${s.season_number} E${i}`, season: s.season_number, episode: i });
-                }
+
+        if (type === 'movie' || type === 'tv' || type === 'channel') {
+            return { 
+                meta: { 
+                    id, 
+                    type, 
+                    name: data.title || data.name, 
+                    poster: data.image || data.thumbnail, 
+                    background: data.image || data.thumbnail, 
+                    description: data.description || "RECTV Canlı Yayın" 
+                } 
+            };
+        } else {
+            const videos = [];
+            data.forEach(s => {
+                const sNum = parseInt(s.title.match(/\d+/) || 1);
+                s.episodes.forEach(ep => {
+                    const eNum = parseInt(ep.title.match(/\d+/) || 1);
+                    videos.push({ id: `${id}:${sNum}:${eNum}`, title: ep.title, season: sNum, episode: eNum });
+                });
             });
-        } else { meta.videos.push({ id, title: obj.title }); }
-        return { meta };
-    } catch (e) { return { meta: { id, type, name: "Yüklenemedi" } }; }
+            return { meta: { id, type, name: "Dizi Detayı", videos } };
+        }
+    } catch (e) { return { meta: {} }; }
 });
 
-// --- 3. STREAM (KAZIYICI) VE NUVIO UYUMU ---
-async function getStreams(tmdbId, mediaType, season, episode) {
+// STREAM HANDLER (Kazıyıcı Bağlantısı ve Canlı TV Desteği)
+builder.defineStreamHandler(async ({ id }) => {
+    const parts = id.split(':');
+    const idParts = parts[0].split('_');
+    const internalId = idParts.pop();
+    const type = idParts.includes('movie') ? 'movie' : (idParts.includes('tv') || idParts.includes('channel') ? 'tv' : 'series');
+    
     try {
-        // İsmi TMDB'den çek
-        const tmRes = await fetch(`https://api.themoviedb.org/3/${mediaType === 'series' ? 'tv' : 'movie'}/${tmdbId}?api_key=${TMDB_KEY}&language=tr-TR`);
-        const tmData = await tmRes.json();
-        const searchTitle = tmData.title || tmData.name;
-        if (!searchTitle) return [];
+        const token = await getAuthToken();
+        const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
+        let sources = [];
 
-        // Kazıyıcı araması
-        const sRes = await fetch(`${BASE_URL}/api/search/${encodeURIComponent(searchTitle)}/${SW_KEY}/`, { headers: FULL_HEADERS });
-        const sData = await sRes.json();
-        const pool = (mediaType === 'series' ? sData.series : sData.posters) || [];
-        const found = pool.find(p => clean(p.title || p.name).toLowerCase().includes(clean(searchTitle).toLowerCase()));
-
-        if (!found) return [];
-
-        if (mediaType === 'movie') {
-            const res = await fetch(`${BASE_URL}/api/movie/${found.id}/${SW_KEY}/`, { headers: FULL_HEADERS });
+        if (type === 'movie') {
+            const res = await fetch(`${BASE_URL}/api/movie/${internalId}/${SW_KEY}/`, { headers });
             const data = await res.json();
-            return (data.sources || []).map(src => ({ name: "RECTV", title: src.quality, url: src.url, quality: src.quality, headers: FULL_HEADERS }));
+            sources = data.sources || [];
+        } else if (type === 'tv') {
+            const res = await fetch(`${BASE_URL}/api/channel/${internalId}/${SW_KEY}//`, { headers });
+            const data = await res.json();
+            // Canlı TV'de kaynaklar direkt "sources" içinde gelmeyebilir, URL'yi kontrol et
+            sources = data.sources || (data.url ? [{ url: data.url }] : []);
         } else {
-            const res = await fetch(`${BASE_URL}/api/season/by/serie/${found.id}/${SW_KEY}/`, { headers: FULL_HEADERS });
-            const seasons = await res.json();
-            const s = seasons.find(s => (s.title.match(/\d+/) || [])[0] == season);
-            const e = (s?.episodes || []).find(e => (e.title.match(/\d+/) || [])[0] == episode);
-            return (e?.sources || []).map(src => ({ name: "RECTV", title: src.quality, url: src.url, quality: src.quality, headers: FULL_HEADERS }));
-        }
-    } catch (e) { return []; }
-}
-
-builder.defineStreamHandler(async ({ id, type }) => {
-    if (id.startsWith("CH_")) {
-        const name = id.replace("CH_", "").replace(/_/g, " ");
-        const sRes = await fetch(`${BASE_URL}/api/search/${encodeURIComponent(name)}/${SW_KEY}/`, { headers: FULL_HEADERS });
-        const sData = await sRes.json();
-        const ch = (sData.channels || []).find(c => clean(c.title || c.name).toLowerCase().includes(name.toLowerCase()));
-        if (ch) {
-            const res = await fetch(`${BASE_URL}/api/channel/${ch.id}/${SW_KEY}/`, { headers: FULL_HEADERS });
+            const res = await fetch(`${BASE_URL}/api/season/by/serie/${internalId}/${SW_KEY}/`, { headers });
             const data = await res.json();
-            return { streams: (data.sources || []).map(src => ({ name: "RECTV", title: src.quality || "LIVE", url: src.url, headers: FULL_HEADERS })) };
+            const season = data.find(s => parseInt(s.title.match(/\d+/)) == parts[1]);
+            const episode = season?.episodes.find(e => parseInt(e.title.match(/\d+/)) == parts[2]);
+            sources = episode?.sources || [];
         }
-    } else {
-        const parts = id.split(':');
-        const streams = await getStreams(parts[0], type, parts[1] || null, parts[2] || null);
-        return { streams };
-    }
-    return { streams: [] };
+
+        return {
+            streams: sources.map((src, idx) => ({
+                name: `RECTV ${type === 'tv' ? 'LIVE' : 'SOURCE'}`,
+                title: `Kaynak ${idx + 1}`,
+                url: src.url,
+                behaviorHints: {
+                    notWebReady: true,
+                    proxyHeaders: { "request": PLAYER_HEADERS }
+                }
+            }))
+        };
+    } catch (e) { return { streams: [] }; }
 });
 
 serveHTTP(builder.getInterface(), { port: PORT });
