@@ -1,57 +1,88 @@
-import pkg from "stremio-addon-sdk";
+import pkg from 'stremio-addon-sdk';
 const { addonBuilder, serveHTTP } = pkg;
-import fetch from "node-fetch";
+import fetch from 'node-fetch';
 
-/* =========================
-   CONFIG
-========================= */
 const PORT = process.env.PORT || 7010;
+
 const BASE_URL = "https://a.prectv70.lol";
 const SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
-const TMDB_KEY = "68e094699525b18a70bab2f86b1fa706";
+const TMDB_KEY = "4ef0d7355d9ffb5151e987764708ce96";
 
-/* =========================
-   🔥 GLOBAL CACHE (EN ÖNEMLİ PARÇA)
-========================= */
-const CACHE = new Map();
-
-/* =========================
-   HEADERS
-========================= */
 const HEADERS = {
-    "User-Agent": "okhttp/4.12.0",
-    "Accept": "application/json"
+    'User-Agent': 'okhttp/4.12.0',
+    'Accept': 'application/json',
+    'hash256': '711bff4afeb47f07ab08a0b07e85d3835e739295e8a6361db77eebd93d96306b'
 };
 
-/* =========================
-   MANIFEST (HATASIZ)
-========================= */
-const manifest = {
-    id: "com.rectv.pro.ultra",
-    version: "6.0.0",
-    name: "RECTV PRO ULTRA",
-    description: "Unified Catalog + Scraper System",
-    types: ["movie", "series", "tv"],
-    resources: ["catalog", "meta", "stream"],
-    idPrefixes: ["tt", "CH_"],
+/* -------------------------
+   HELPERS
+------------------------- */
 
+// CH_KANAL_D → Kanal D
+function normalizeChannel(id) {
+    return id
+        .replace("CH_", "")
+        .replace(/_/g, " ")
+        .toLowerCase()
+        .trim();
+}
+
+// tt123456:1:1 parser
+function parseId(id) {
+    const parts = id.split(":");
+    return {
+        imdb: parts[0],
+        season: parts[1] || 1,
+        episode: parts[2] || 1
+    };
+}
+
+// TMDB → isim çöz
+async function getTitleFromTmdb(imdbId, type) {
+    try {
+        const url = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${TMDB_KEY}&external_source=imdb_id&language=tr-TR`;
+        const res = await fetch(url);
+        const data = await res.json();
+
+        const obj =
+            type === "series"
+                ? data.tv_results?.[0]
+                : data.movie_results?.[0];
+
+        return obj?.title || obj?.name || null;
+    } catch {
+        return null;
+    }
+}
+
+/* -------------------------
+   MANIFEST
+------------------------- */
+
+const manifest = {
+    id: "com.fix.hybrid.scraper",
+    version: "1.0.0",
+    name: "Hybrid TV + Scraper",
+    resources: ["catalog", "meta", "stream"],
+    types: ["movie", "series", "tv"],
+    idPrefixes: ["tt", "CH_"],
     catalogs: [
         {
-            id: "live",
+            id: "live_tv",
             type: "tv",
-            name: "📺 Canlı TV",
+            name: "Canlı TV",
             extra: [{ name: "search" }]
         },
         {
             id: "movies",
             type: "movie",
-            name: "🎬 Filmler",
+            name: "Filmler",
             extra: [{ name: "search" }]
         },
         {
             id: "series",
             type: "series",
-            name: "🍿 Diziler",
+            name: "Diziler",
             extra: [{ name: "search" }]
         }
     ]
@@ -59,177 +90,164 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
-/* =========================
-   TMDB → TITLE
-========================= */
-async function getTitleFromImdb(imdb, type) {
-    try {
-        const url = `https://api.themoviedb.org/3/find/${imdb}?api_key=${TMDB_KEY}&external_source=imdb_id&language=tr-TR`;
-        const res = await fetch(url);
-        const data = await res.json();
-
-        if (type === "movie") return data.movie_results?.[0]?.title;
-        if (type === "series") return data.tv_results?.[0]?.name;
-    } catch (e) {}
-    return null;
-}
-
-/* =========================
+/* -------------------------
    CATALOG
-========================= */
+------------------------- */
+
 builder.defineCatalogHandler(async ({ id, type, extra }) => {
+    try {
 
-    const search = extra?.search || "";
+        // LIVE TV
+        if (id === "live_tv") {
+            const url = extra?.search
+                ? `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`
+                : `${BASE_URL}/api/channel/by/filtres/3/0/0/${SW_KEY}/`;
 
-    /* -------- LIVE TV -------- */
-    if (id === "live") {
-        const res = await fetch(`${BASE_URL}/api/search/${search}/${SW_KEY}/`);
+            const res = await fetch(url, { headers: HEADERS });
+            const data = await res.json();
+
+            const list = data.channels || data || [];
+
+            return {
+                metas: list.map(c => ({
+                    id: `CH_${c.title?.replace(/\s+/g, "_")}`,
+                    type: "tv",
+                    name: c.title || c.name,
+                    poster: c.image
+                }))
+            };
+        }
+
+        // MOVIE / SERIES SEARCH
+        const url = `${BASE_URL}/api/search/${encodeURIComponent(extra?.search || "")}/${SW_KEY}/`;
+        const res = await fetch(url, { headers: HEADERS });
         const data = await res.json();
+
+        const items = type === "series" ? (data.series || []) : (data.posters || []);
 
         return {
-            metas: (data.channels || []).map(ch => {
-                const cid = "CH_" + ch.title.replace(/\s/g, "_");
-
-                CACHE.set(cid, ch.title); // 🔥 CACHE
-
+            metas: items.slice(0, 20).map(item => {
+                const imdb = item.imdb || item.imdb_id || "tt000000";
                 return {
-                    id: cid,
-                    type: "tv",
-                    name: ch.title
+                    id: type === "series" ? `${imdb}:1:1` : imdb,
+                    type,
+                    name: item.title || item.name,
+                    poster: item.image
                 };
             })
         };
+
+    } catch (e) {
+        return { metas: [] };
     }
-
-    /* -------- MOVIE / SERIES -------- */
-    const res = await fetch(`${BASE_URL}/api/search/${search}/${SW_KEY}/`);
-    const data = await res.json();
-
-    const list = data.series || data.posters || [];
-
-    const metas = list.slice(0, 20).map(item => {
-        const imdb = "tt" + String(item.id).padStart(7, "0");
-
-        CACHE.set(imdb, item.title); // 🔥 CACHE BRIDGE
-
-        return {
-            id: type === "series" ? `${imdb}:1:1` : imdb,
-            type,
-            name: item.title
-        };
-    });
-
-    return { metas };
 });
 
-/* =========================
-   META
-========================= */
-builder.defineMetaHandler(async ({ id, type }) => {
+/* -------------------------
+   STREAM (SCRAPER CORE FIX)
+------------------------- */
 
-    if (id.startsWith("CH_")) {
-        const name = CACHE.get(id) || id.replace("CH_", "").replace(/_/g, " ");
-        return {
-            meta: {
-                id,
-                type: "tv",
-                name
-            }
-        };
-    }
-
-    return {
-        meta: {
-            id,
-            type,
-            name: CACHE.get(id.split(":")[0]) || id
-        }
-    };
-});
-
-/* =========================
-   STREAM (ASIL SİSTEM)
-   ❌ SEARCH YOK
-   ✔ SADECE CACHE + 1 API
-========================= */
 builder.defineStreamHandler(async ({ id, type }) => {
+    try {
 
-    /* -------- LIVE TV -------- */
-    if (id.startsWith("CH_")) {
+        /* =====================
+           CANLI TV
+        ===================== */
+        if (id.startsWith("CH_")) {
+            const name = normalizeChannel(id);
 
-        const name = CACHE.get(id);
+            const res = await fetch(
+                `${BASE_URL}/api/search/${encodeURIComponent(name)}/${SW_KEY}/`,
+                { headers: HEADERS }
+            );
 
-        const res = await fetch(`${BASE_URL}/api/search/${name}/${SW_KEY}/`);
-        const data = await res.json();
+            const data = await res.json();
+            const ch = (data.channels || []).find(c =>
+                normalizeChannel("CH_" + c.title) === id.toLowerCase()
+            );
 
-        const ch = (data.channels || []).find(c =>
-            c.title.replace(/\s/g, "_") === id.replace("CH_", "")
+            if (!ch) return { streams: [] };
+
+            const r = await fetch(
+                `${BASE_URL}/api/channel/${ch.id}/${SW_KEY}/`,
+                { headers: HEADERS }
+            );
+
+            const d = await r.json();
+
+            return {
+                streams: (d.sources || []).map(s => ({
+                    name: "RECTV",
+                    title: s.title,
+                    url: s.url
+                }))
+            };
+        }
+
+        /* =====================
+           MOVIE / SERIES SCRAPER BRIDGE
+        ===================== */
+
+        const { imdb, season, episode } = parseId(id);
+
+        const title = await getTitleFromTmdb(imdb, type);
+        if (!title) return { streams: [] };
+
+        // 🔥 KRİTİK: isim ile tekrar kazıma
+        const searchRes = await fetch(
+            `${BASE_URL}/api/search/${encodeURIComponent(title)}/${SW_KEY}/`,
+            { headers: HEADERS }
         );
 
-        if (!ch) return { streams: [] };
+        const searchData = await searchRes.json();
 
-        const r = await fetch(`${BASE_URL}/api/channel/${ch.id}/${SW_KEY}/`);
-        const d = await r.json();
+        const pool = type === "series"
+            ? (searchData.series || [])
+            : (searchData.posters || []);
 
-        return {
-            streams: (d.sources || []).map(s => ({
-                name: "RECTV",
-                url: s.url
-            }))
-        };
-    }
+        const match = pool.find(p =>
+            (p.title || p.name)
+                .toLowerCase()
+                .includes(title.toLowerCase().split(" ")[0])
+        );
 
-    /* -------- MOVIE / SERIES -------- */
-    const imdb = id.split(":")[0];
+        if (!match) return { streams: [] };
 
-    const title = CACHE.get(imdb) || await getTitleFromImdb(imdb, type);
+        const detailRes = await fetch(
+            `${BASE_URL}/api/${type === "series" ? "serie" : "movie"}/${match.id}/${SW_KEY}/`,
+            { headers: HEADERS }
+        );
 
-    if (!title) return { streams: [] };
-
-    const res = await fetch(`${BASE_URL}/api/search/${title}/${SW_KEY}/`);
-    const data = await res.json();
-
-    const pool = data.series || data.posters || [];
-
-    let streams = [];
-
-    for (let item of pool) {
+        const detail = await detailRes.json();
 
         if (type === "series") {
+            const s = (detail.seasons || []).find(x => x.season_number == season);
+            const e = s?.episodes?.find(x => x.episode_number == episode);
 
-            const s = await fetch(`${BASE_URL}/api/serie/${item.id}/${SW_KEY}/`);
-            const d = await s.json();
-
-            (d.seasons || []).forEach(season => {
-                season.episodes?.forEach(ep => {
-                    ep.sources?.forEach(src => {
-                        streams.push({
-                            name: "RECTV",
-                            url: src.url
-                        });
-                    });
-                });
-            });
-
-        } else {
-
-            const s = await fetch(`${BASE_URL}/api/movie/${item.id}/${SW_KEY}/`);
-            const d = await s.json();
-
-            (d.sources || []).forEach(src => {
-                streams.push({
+            return {
+                streams: (e?.sources || []).map(src => ({
                     name: "RECTV",
+                    title: src.title,
                     url: src.url
-                });
-            });
+                }))
+            };
         }
-    }
 
-    return { streams };
+        return {
+            streams: (detail.sources || []).map(src => ({
+                name: "RECTV",
+                title: src.title,
+                url: src.url
+            }))
+        };
+
+    } catch (e) {
+        return { streams: [] };
+    }
 });
 
-/* =========================
-   RUN
-========================= */
+/* -------------------------
+   START
+------------------------- */
+
 const addonInterface = builder.getInterface();
 serveHTTP(addonInterface, { port: PORT });
