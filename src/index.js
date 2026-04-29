@@ -29,7 +29,7 @@ export const manifest = {
     id: "com.nuvio.rectv.v481.full_complete",
     version: "4.8.1",
     name: "RECTV Pro Ultimate",
-    description: "TV: Detaylı Meta & Poster | Film-Dizi: tt ID",
+    description: "TV: Sabit Poster & Meta | Film-Dizi: tt ID",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
     idPrefixes: ["CH_", "tt"],
@@ -44,7 +44,6 @@ export const manifest = {
 
 const builder = new addonBuilder(manifest);
 
-// --- IMDb ID BULUCU ---
 async function findPureImdbId(title, type) {
     try {
         const sType = type === 'series' ? 'tv' : 'movie';
@@ -54,17 +53,15 @@ async function findPureImdbId(title, type) {
         if (data.results?.[0]) {
             const ext = await fetch(`https://api.themoviedb.org/3/${sType}/${data.results[0].id}/external_ids?api_key=${TMDB_KEY}`);
             const extData = await ext.json();
-            return extData.imdb_id ? extData.imdb_id : null;
+            return extData.imdb_id || null;
         }
     } catch (e) { return null; }
     return null;
 }
 
-// --- KATALOG HANDLER ---
+// --- KATALOG HANDLER (POSTERLERİN ANINDA GÖRÜNMESİ İÇİN) ---
 builder.defineCatalogHandler(async (args) => {
     const { id, type, extra } = args;
-    let rawItems = [];
-
     try {
         if (id === "rc_live") {
             const gid = (extra?.genre) ? (TV_MAP[extra.genre] || "3") : "3";
@@ -72,24 +69,23 @@ builder.defineCatalogHandler(async (args) => {
             const res = await fetch(tvUrl, { headers: FULL_HEADERS });
             const data = await res.json();
             const channels = extra?.search ? (data.channels || []) : (data || []);
+            
             return { metas: channels.map(ch => ({
                 id: `CH_${(ch.title || ch.name).replace(/\s+/g, '_')}`,
                 type: "tv", 
                 name: ch.title || ch.name, 
-                poster: ch.image, 
-                background: ch.image, // Katalogda da eklendi
-                logo: ch.image,       // Katalogda da eklendi
+                poster: ch.image,
+                background: ch.image,
+                logo: ch.image,
                 posterShape: "landscape",
-                genres: [ch.label || "Canlı TV"],
-                releaseInfo: "LIVE",
+                description: `${ch.title} - Canlı Yayın`,
                 runtime: "Canlı Yayın",
-                description: `${ch.title} kanalını RECTV üzerinden canlı izleyin.`
+                releaseInfo: "LIVE"
             })) };
         }
 
         const path = type === 'series' ? 'serie' : 'movie';
         let fetchUrl;
-
         if (extra?.search) {
             fetchUrl = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
         } else if (id.includes("_year")) {
@@ -102,11 +98,7 @@ builder.defineCatalogHandler(async (args) => {
 
         const res = await fetch(fetchUrl, { headers: FULL_HEADERS });
         const data = await res.json();
-        rawItems = extra?.search ? (type === 'series' ? data.series : data.posters) : (Array.isArray(data) ? data : data.posters || []);
-
-        if (extra?.genre && id.includes("_year")) {
-            rawItems = (rawItems || []).filter(item => item.year && item.year.toString() === extra.genre.toString());
-        }
+        const rawItems = extra?.search ? (type === 'series' ? data.series : data.posters) : (Array.isArray(data) ? data : data.posters || []);
 
         const metas = await Promise.all((rawItems || []).slice(0, 15).map(async (item) => {
             const title = item.title || item.name;
@@ -131,17 +123,11 @@ builder.defineMetaHandler(async ({ id, type }) => {
             const ch = (data.channels || []).find(c => (c.title || c.name).replace(/\s+/g, '_') === id.replace("CH_", ""));
             if (ch) {
                 return { meta: {
-                    id, 
-                    type: "tv", 
-                    name: ch.title || ch.name, 
-                    poster: ch.image, 
-                    background: ch.image,
-                    logo: ch.image,
-                    description: `${ch.title} kanalını RECTV üzerinden canlı izleyin.`,
+                    id, type: "tv", name: ch.title || ch.name, 
+                    poster: ch.image, background: ch.image, logo: ch.image,
+                    description: `${ch.title} kanalını kesintisiz izleyin.`,
                     genres: [ch.label || "Canlı TV"],
-                    releaseInfo: "LIVE",
-                    runtime: "Canlı Yayın",
-                    posterShape: "landscape"
+                    releaseInfo: "LIVE", runtime: "Canlı Yayın", posterShape: "landscape"
                 }};
             }
         } catch (e) {}
@@ -198,9 +184,6 @@ builder.defineStreamHandler(async (args) => {
         } else if (id.startsWith("tt")) {
             const parts = id.split(':');
             const pureId = parts[0]; 
-            const season = args.season || parts[1] || 1;
-            const episode = args.episode || parts[2] || 1;
-            
             const tmdbRes = await fetch(`https://api.themoviedb.org/3/find/${pureId}?api_key=${TMDB_KEY}&external_source=imdb_id&language=tr-TR`);
             const tmdbData = await tmdbRes.json();
             const obj = tmdbData.movie_results?.[0] || tmdbData.tv_results?.[0];
@@ -214,6 +197,8 @@ builder.defineStreamHandler(async (args) => {
                     const res = await fetch(`${BASE_URL}/api/${type === 'series' ? 'serie' : 'movie'}/${found.id}/${SW_KEY}/`, { headers: FULL_HEADERS });
                     const data = await res.json();
                     if (type === 'series') {
+                        const season = args.season || parts[1] || 1;
+                        const episode = args.episode || parts[2] || 1;
                         const targetS = (data.seasons || []).find(s => s.season_number == season);
                         const targetE = (targetS?.episodes || []).find(e => e.episode_number == episode);
                         if (targetE?.sources) return { streams: targetE.sources.map(src => ({ name: "RECTV", title: src.title, url: src.url })) };
