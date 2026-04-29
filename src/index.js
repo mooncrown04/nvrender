@@ -5,226 +5,209 @@ import fetch from 'node-fetch';
 const PORT = process.env.PORT || 7010;
 const BASE_URL = "https://a.prectv70.lol";
 const SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
-const TMDB_KEY = "4ef0d7355d9ffb5151e987764708ce96";
 
-const FULL_HEADERS = {
-    'User-Agent': 'okhttp/4.12.0',
-    'Accept': 'application/json',
-    'hash256': '711bff4afeb47f07ab08a0b07e85d3835e739295e8a6361db77eebd93d96306b'
+const HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+    'Referer': 'https://twitter.com/',
+    'Accept': 'application/json'
 };
 
-// ================= NORMALIZE =================
-function normalize(str) {
-    return str
-        ?.toLowerCase()
-        .replace(/[:\-–—]/g, ' ')
-        .replace(/\(.*?\)/g, '')
-        .replace(/[^a-z0-9ğüşöçıİ\s]/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim() || "";
-}
+const PLAYER_HEADERS = {
+    'User-Agent': 'googleusercontent',
+    'Referer': 'https://twitter.com/',
+    'Accept-Encoding': 'identity'
+};
 
-// ================= FUZZY MATCH =================
-function findBestMatch(title, pool) {
-    const normTitle = normalize(title);
-
-    let best = null;
-    let bestScore = 0;
-
-    for (const item of pool) {
-        const itemTitle = normalize(item.title || item.name);
-
-        let score = 0;
-
-        if (itemTitle.includes(normTitle)) score += 5;
-
-        const words = normTitle.split(' ');
-        for (const w of words) {
-            if (itemTitle.includes(w)) score += 1;
-        }
-
-        if (score > bestScore) {
-            bestScore = score;
-            best = item;
-        }
-    }
-
-    return bestScore >= 3 ? best : null;
-}
-
-// ================= SEARCH CLEAN =================
-function cleanSearchTitle(title) {
-    return title
-        .replace(/[:\-–—]/g, ' ')
-        .split(' ')
-        .slice(0, 3)
-        .join(' ');
-}
-
-// ================= MANIFEST =================
 const manifest = {
-    id: "com.nuvio.rectv.ultra",
-    version: "5.0.0",
-    name: "RECTV ULTRA MATCH",
-    description: "Ultra Matching System",
+    id: "com.mooncrown.rectv.bridge",
+    version: "12.0.0",
+    name: "RECTV Bridge Mode",
+    description: "Internal RECTV IDs with External IMDb/TMDB Export",
     resources: ["catalog", "meta", "stream"],
-    types: ["movie", "series", "channel"],
-    idPrefixes: ["CH_", "tt"],
+    types: ["movie", "series", "tv"],
+    idPrefixes: ["rectv_", "tt", "tmdb:", "CH_"],
     catalogs: [
-        { id: "rc_live", type: "channel", name: "📺 Canlı TV" },
-        { id: "rc_movie", type: "movie", name: "🎬 Filmler", extra: [{ name: "search" }] },
-        { id: "rc_series", type: "series", name: "🍿 Diziler", extra: [{ name: "search" }] }
+        { id: "rc_live", type: "tv", name: "RECTV Canlı TV" },
+        { id: "rc_movie", type: "movie", name: "RECTV Filmler", extra: [{ name: "search" }, { name: "skip" }] },
+        { id: "rc_series", type: "series", name: "RECTV Diziler", extra: [{ name: "search" }, { name: "skip" }] }
     ]
 };
 
 const builder = new addonBuilder(manifest);
 
-// ================= IMDb FIND =================
-async function findImdb(title, type) {
+async function getAuthToken() {
     try {
-        const t = type === 'series' ? 'tv' : 'movie';
-        const res = await fetch(`https://api.themoviedb.org/3/search/${t}?api_key=${TMDB_KEY}&query=${encodeURIComponent(title)}`);
-        const data = await res.json();
-        if (data.results?.[0]) {
-            const ext = await fetch(`https://api.themoviedb.org/3/${t}/${data.results[0].id}/external_ids?api_key=${TMDB_KEY}`);
-            const extData = await ext.json();
-            return extData.imdb_id?.replace("tt", "");
-        }
-    } catch {}
-    return null;
+        const res = await fetch(`${BASE_URL}/api/attest/nonce`, { headers: HEADERS });
+        const json = await res.json();
+        return json.accessToken || (await res.text()).trim();
+    } catch (e) { return null; }
 }
 
-// ================= CATALOG =================
+function parseId(id) {
+    const parts = id.split(':');
+    const mainId = parts[0];
+    
+    let type = "movie";
+    if (mainId.startsWith("CH_") || id.includes("_tv_")) type = "tv";
+    if (id.includes("_series_") || parts.length > 1) type = "series";
+
+    const cleanId = mainId.replace('rectv_movie_', '')
+                          .replace('rectv_series_', '')
+                          .replace('rectv_tv_', '')
+                          .replace('tmdb:', '')
+                          .replace('CH_', '')
+                          .replace('tt', '');
+
+    return {
+        type,
+        fullId: id,
+        cleanId,
+        isExternal: mainId.startsWith('tt') || mainId.startsWith('tmdb:'),
+        season: parts[1] ? parseInt(parts[1]) : null,
+        episode: parts[2] ? parseInt(parts[2]) : null
+    };
+}
+
+// 1. CATALOG HANDLER - KENDİ ID'mizi döndür (tt değil)
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
+    console.log("[CATALOG] Request:", { type, id, extra });
     try {
-        const url = extra?.search
-            ? `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`
-            : `${BASE_URL}/api/${type === 'series' ? 'serie' : 'movie'}/by/filtres/0/created/0/${SW_KEY}/`;
-
-        const res = await fetch(url, { headers: FULL_HEADERS });
+        const token = await getAuthToken();
+        console.log("[CATALOG] Token:", token ? "OK" : "FAIL");
+        const authHeaders = { ...HEADERS, 'Authorization': `Bearer ${token}` };
+        
+        let url;
+        if (id === "rc_live") {
+            url = `${BASE_URL}/api/channel/by/category/1/${SW_KEY}/`;
+        } else {
+            url = extra?.search 
+                ? `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`
+                : `${BASE_URL}/api/${type === 'movie' ? 'movie' : 'serie'}/by/filtres/0/created/${extra?.skip || 0}/${SW_KEY}/`;
+        }
+        
+        console.log("[CATALOG] Fetching:", url);
+        const res = await fetch(url, { headers: authHeaders });
+        console.log("[CATALOG] Response status:", res.status);
+        
         const data = await res.json();
-
-        const items = extra?.search
-            ? (type === 'series' ? data.series : data.posters)
-            : (data.posters || data.series || []);
-
-        const metas = await Promise.all(items.slice(0, 50).map(async item => {
-            const imdb = await findImdb(item.title || item.name, type);
-            if (!imdb) return null;
-
-            return {
-                id: type === 'series' ? `${imdb}:1:1` : imdb,
-                type,
-                name: item.title || item.name,
-                poster: item.image
-            };
-        }));
-
-        return { metas: metas.filter(Boolean) };
-
-    } catch {
-        return { metas: [] };
+        console.log("[CATALOG] Data keys:", Object.keys(data));
+        
+        const items = data.channels || data.posters || data.series || (Array.isArray(data) ? data : []);
+        console.log("[CATALOG] Items found:", items.length);
+        
+        return { 
+            metas: items.map(item => {
+                // KENDİ ID'mizi kullan - tt'yi META içine gömeceğiz
+                return { 
+                    id: `rectv_${type}_${item.id}`, 
+                    type: type, 
+                    name: item.title || item.name, 
+                    poster: item.image || item.thumbnail,
+                    posterShape: type === 'tv' ? "landscape" : "poster"
+                };
+            }) 
+        };
+    } catch (e) { 
+        console.error("[CATALOG] Error:", e.message);
+        return { metas: [] }; 
     }
 });
 
-// ================= META =================
-builder.defineMetaHandler(async ({ id, type }) => {
+// 2. META HANDLER - tt ve tmdb ID'leri embed et
+builder.defineMetaHandler(async ({ type, id }) => {
+    console.log("[META] Request:", { type, id });
+    const parsed = parseId(id);
+    const token = await getAuthToken();
+    const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
+
     try {
-        const pure = id.split(':')[0];
+        let url;
+        if (id.startsWith('CH_') || id.includes('_tv_')) {
+            url = `${BASE_URL}/api/channel/${parsed.cleanId}/${SW_KEY}/`;
+        } else if (type === 'movie') {
+            url = `${BASE_URL}/api/movie/${parsed.cleanId}/${SW_KEY}/`;
+        } else {
+            url = `${BASE_URL}/api/season/by/serie/${parsed.cleanId}/${SW_KEY}/`;
+        }
 
-        const res = await fetch(`https://api.themoviedb.org/3/find/tt${pure}?api_key=${TMDB_KEY}`);
+        console.log("[META] Fetching:", url);
+        const res = await fetch(url, { headers });
+        console.log("[META] Response status:", res.status);
+        
         const data = await res.json();
+        console.log("[META] Data keys:", Object.keys(data));
 
-        const obj = type === 'series' ? data.tv_results?.[0] : data.movie_results?.[0];
-        if (!obj) return { meta: {} };
-
-        const meta = {
-            id,
-            type,
-            name: obj.name || obj.title,
-            poster: `https://image.tmdb.org/t/p/w500${obj.poster_path}`,
-            background: `https://image.tmdb.org/t/p/original${obj.backdrop_path}`,
-            description: obj.overview,
-            videos: []
-        };
-
-        if (type === 'series') {
-            const det = await fetch(`https://api.themoviedb.org/3/tv/${obj.id}?api_key=${TMDB_KEY}`);
-            const detData = await det.json();
-
-            for (const s of detData.seasons || []) {
-                if (s.season_number === 0) continue;
-
-                const sr = await fetch(`https://api.themoviedb.org/3/tv/${obj.id}/season/${s.season_number}?api_key=${TMDB_KEY}`);
-                const sd = await sr.json();
-
-                (sd.episodes || []).forEach(ep => {
-                    meta.videos.push({
-                        id: `${pure}:${ep.season_number}:${ep.episode_number}`,
-                        title: ep.name,
-                        season: ep.season_number,
-                        episode: ep.episode_number
+        if (type === 'movie' || type === 'tv') {
+            return { 
+                meta: { 
+                    id: id,
+                    type, 
+                    name: data.title || data.name, 
+                    poster: data.image || data.thumbnail, 
+                    background: data.image || data.thumbnail,
+                    // tt varsa embed et - diğer sağlayıcılar (Torrentio vb.) bunu görür
+                    imdb_id: data.imdb_id || null,
+                    tmdb_id: data.tmdb_id || null
+                } 
+            };
+        } else {
+            const videos = [];
+            if (Array.isArray(data)) {
+                data.forEach(s => {
+                    const sNum = parseInt(s.title.match(/\d+/) || 1);
+                    s.episodes.forEach(ep => {
+                        const eNum = parseInt(ep.title.match(/\d+/) || 1);
+                        const videoId = `${id}:${sNum}:${eNum}`;
+                        videos.push({ id: videoId, title: ep.title, season: sNum, episode: eNum });
                     });
                 });
             }
+            return { meta: { id, type: 'series', name: data.title || data.name || "Dizi Detayı", poster: data.image || data.thumbnail, videos } };
         }
-
-        return { meta };
-
-    } catch {
-        return { meta: {} };
+    } catch (e) { 
+        console.error("[META] Error:", e.message);
+        return { meta: null }; 
     }
 });
 
-// ================= STREAM =================
-builder.defineStreamHandler(async ({ id, type }) => {
+// 3. STREAM HANDLER
+builder.defineStreamHandler(async ({ id }) => {
+    console.log("[STREAM] Request:", { id });
+    const parsed = parseId(id);
+    const token = await getAuthToken();
+    const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
+
     try {
-        const pure = id.split(':')[0];
-        const season = id.split(':')[1];
-        const episode = id.split(':')[2];
-
-        const tmdbRes = await fetch(`https://api.themoviedb.org/3/find/tt${pure}?api_key=${TMDB_KEY}`);
-        const tmdbData = await tmdbRes.json();
-        const obj = tmdbData.movie_results?.[0] || tmdbData.tv_results?.[0];
-
-        if (!obj) return { streams: [] };
-
-        const title = obj.title || obj.name;
-        const clean = cleanSearchTitle(title);
-
-        const searchRes = await fetch(`${BASE_URL}/api/search/${encodeURIComponent(clean)}/${SW_KEY}/`, { headers: FULL_HEADERS });
-        const searchData = await searchRes.json();
-
-        const pool = (type === 'series' ? searchData.series : searchData.posters) || [];
-
-        const found = findBestMatch(title, pool);
-        if (!found) return { streams: [] };
-
-        const res = await fetch(`${BASE_URL}/api/${type === 'series' ? 'serie' : 'movie'}/${found.id}/${SW_KEY}/`, { headers: FULL_HEADERS });
-        const data = await res.json();
-
-        if (type === 'series') {
-            const s = data.seasons?.find(x => x.season_number == season);
-            const e = s?.episodes?.find(x => x.episode_number == episode);
-            return {
-                streams: (e?.sources || []).map(src => ({
-                    name: "RECTV",
-                    url: src.url
-                }))
-            };
+        let sources = [];
+        if (parsed.type === 'tv') {
+            const res = await fetch(`${BASE_URL}/api/channel/${parsed.cleanId}/${SW_KEY}/`, { headers });
+            const data = await res.json();
+            sources = data.sources || (data.url ? [{ url: data.url }] : []);
+        } else if (!parsed.season) {
+            const res = await fetch(`${BASE_URL}/api/movie/${parsed.cleanId}/${SW_KEY}/`, { headers });
+            const data = await res.json();
+            sources = data.sources || [];
+        } else {
+            const res = await fetch(`${BASE_URL}/api/season/by/serie/${parsed.cleanId}/${SW_KEY}/`, { headers });
+            const data = await res.json();
+            const season = data.find(s => (s.title.match(/\d+/) || [])[0] == parsed.season);
+            const episode = season?.episodes.find(e => (e.title.match(/\d+/) || [])[0] == parsed.episode);
+            sources = episode?.sources || [];
         }
 
         return {
-            streams: (data.sources || []).map(src => ({
+            streams: sources.map(src => ({
                 name: "RECTV",
-                url: src.url
+                title: "Oynat",
+                url: src.url,
+                behaviorHints: { notWebReady: true, proxyHeaders: { "request": PLAYER_HEADERS } }
             }))
         };
-
-    } catch {
-        return { streams: [] };
+    } catch (e) { 
+        console.error("[STREAM] Error:", e.message);
+        return { streams: [] }; 
     }
 });
 
-// ================= START =================
 serveHTTP(builder.getInterface(), { port: PORT });
+console.log(`RECTV Bridge Mode running on port ${PORT}`);
