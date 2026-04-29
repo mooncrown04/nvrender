@@ -3,129 +3,124 @@ const { addonBuilder, serveHTTP } = pkg;
 import fetch from 'node-fetch';
 
 const PORT = process.env.PORT || 7010;
-
 const BASE_URL = "https://a.prectv70.lol";
 const SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
+const TMDB_KEY = "4ef0d7355d9ffb5151e987764708ce96";
 
-const HEADERS = {
-    'User-Agent': 'Mozilla/5.0',
-    'Referer': 'https://twitter.com/',
-    'Accept': 'application/json'
+const FULL_HEADERS = {
+    'User-Agent': 'okhttp/4.12.0',
+    'Accept': 'application/json',
+    'hash256': '711bff4afeb47f07ab08a0b07e85d3835e739295e8a6361db77eebd93d96306b'
 };
 
-const PLAYER_HEADERS = {
-    'User-Agent': 'googleusercontent',
-    'Referer': 'https://twitter.com/',
-    'Accept-Encoding': 'identity'
-};
+// ================= NORMALIZE =================
+function normalize(str) {
+    return str
+        ?.toLowerCase()
+        .replace(/[:\-–—]/g, ' ')
+        .replace(/\(.*?\)/g, '')
+        .replace(/[^a-z0-9ğüşöçıİ\s]/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim() || "";
+}
 
-// 🔥 CACHE (IMDb → internal ID)
-const idCache = new Map();
+// ================= FUZZY MATCH =================
+function findBestMatch(title, pool) {
+    const normTitle = normalize(title);
+
+    let best = null;
+    let bestScore = 0;
+
+    for (const item of pool) {
+        const itemTitle = normalize(item.title || item.name);
+
+        let score = 0;
+
+        if (itemTitle.includes(normTitle)) score += 5;
+
+        const words = normTitle.split(' ');
+        for (const w of words) {
+            if (itemTitle.includes(w)) score += 1;
+        }
+
+        if (score > bestScore) {
+            bestScore = score;
+            best = item;
+        }
+    }
+
+    return bestScore >= 3 ? best : null;
+}
+
+// ================= SEARCH CLEAN =================
+function cleanSearchTitle(title) {
+    return title
+        .replace(/[:\-–—]/g, ' ')
+        .split(' ')
+        .slice(0, 3)
+        .join(' ');
+}
 
 // ================= MANIFEST =================
 const manifest = {
-    id: "com.mooncrown.rectv.fullbridge",
-    version: "13.0.0",
-    name: "RECTV Full Bridge",
-    description: "Full IMDb/TMDB Compatible Addon",
+    id: "com.nuvio.rectv.ultra",
+    version: "5.0.0",
+    name: "RECTV ULTRA MATCH",
+    description: "Ultra Matching System",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "channel"],
-    idPrefixes: ["tt", "tmdb:", "rectv_", "CH_"],
+    idPrefixes: ["CH_", "tt"],
     catalogs: [
-        { id: "rc_live", type: "channel", name: "Canlı TV" },
-        { id: "rc_movie", type: "movie", name: "Filmler", extra: [{ name: "search" }] },
-        { id: "rc_series", type: "series", name: "Diziler", extra: [{ name: "search" }] }
+        { id: "rc_live", type: "channel", name: "📺 Canlı TV" },
+        { id: "rc_movie", type: "movie", name: "🎬 Filmler", extra: [{ name: "search" }] },
+        { id: "rc_series", type: "series", name: "🍿 Diziler", extra: [{ name: "search" }] }
     ]
 };
 
 const builder = new addonBuilder(manifest);
 
-// ================= TOKEN =================
-async function getAuthToken() {
+// ================= IMDb FIND =================
+async function findImdb(title, type) {
     try {
-        const res = await fetch(`${BASE_URL}/api/attest/nonce`, { headers: HEADERS });
-        const json = await res.json();
-        return json.accessToken;
-    } catch {
-        return null;
-    }
-}
-
-// ================= ID PARSE =================
-function parseId(id) {
-    const parts = id.split(':');
-    const main = parts[0];
-
-    let type = "movie";
-    if (main.startsWith("CH_")) type = "channel";
-    if (parts.length > 1) type = "series";
-
-    return {
-        raw: id,
-        main,
-        season: parts[1],
-        episode: parts[2],
-        isExternal: main.startsWith("tt") || main.startsWith("tmdb:")
-    };
-}
-
-// ================= SEARCH MAPPING =================
-async function mapExternalToInternal(parsed, token) {
-    if (!parsed.isExternal) return parsed.main;
-
-    if (idCache.has(parsed.main)) return idCache.get(parsed.main);
-
-    try {
-        const headers = { ...HEADERS, Authorization: `Bearer ${token}` };
-
-        // 🔥 SEARCH ile eşle
-        const searchTerm = parsed.main.replace("tt", "");
-        const res = await fetch(`${BASE_URL}/api/search/${searchTerm}/${SW_KEY}/`, { headers });
+        const t = type === 'series' ? 'tv' : 'movie';
+        const res = await fetch(`https://api.themoviedb.org/3/search/${t}?api_key=${TMDB_KEY}&query=${encodeURIComponent(title)}`);
         const data = await res.json();
-
-        const item = (data.posters || data.series || []).find(i =>
-            i.imdb_id === parsed.main
-        );
-
-        if (item) {
-            const internal = item.id.toString();
-            idCache.set(parsed.main, internal);
-            return internal;
+        if (data.results?.[0]) {
+            const ext = await fetch(`https://api.themoviedb.org/3/${t}/${data.results[0].id}/external_ids?api_key=${TMDB_KEY}`);
+            const extData = await ext.json();
+            return extData.imdb_id?.replace("tt", "");
         }
     } catch {}
-
     return null;
 }
 
 // ================= CATALOG =================
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
     try {
-        const token = await getAuthToken();
-        const headers = { ...HEADERS, Authorization: `Bearer ${token}` };
+        const url = extra?.search
+            ? `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`
+            : `${BASE_URL}/api/${type === 'series' ? 'serie' : 'movie'}/by/filtres/0/created/0/${SW_KEY}/`;
 
-        let url;
-
-        if (id === "rc_live") {
-            url = `${BASE_URL}/api/channel/by/category/1/${SW_KEY}/`;
-        } else if (extra?.search) {
-            url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
-        } else {
-            url = `${BASE_URL}/api/${type === 'movie' ? 'movie' : 'serie'}/by/filtres/0/created/0/${SW_KEY}/`;
-        }
-
-        const res = await fetch(url, { headers });
+        const res = await fetch(url, { headers: FULL_HEADERS });
         const data = await res.json();
 
-        const items = data.channels || data.posters || data.series || [];
+        const items = extra?.search
+            ? (type === 'series' ? data.series : data.posters)
+            : (data.posters || data.series || []);
 
-        return {
-            metas: items.map(i => ({
-                id: i.imdb_id ? i.imdb_id : `rectv_${type}_${i.id}`,
+        const metas = await Promise.all(items.slice(0, 50).map(async item => {
+            const imdb = await findImdb(item.title || item.name, type);
+            if (!imdb) return null;
+
+            return {
+                id: type === 'series' ? `${imdb}:1:1` : imdb,
                 type,
-                name: i.title || i.name,
-                poster: i.image || i.thumbnail
-            }))
-        };
+                name: item.title || item.name,
+                poster: item.image
+            };
+        }));
+
+        return { metas: metas.filter(Boolean) };
 
     } catch {
         return { metas: [] };
@@ -133,58 +128,48 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 });
 
 // ================= META =================
-builder.defineMetaHandler(async ({ type, id }) => {
-    const parsed = parseId(id);
-    const token = await getAuthToken();
-
-    const internalId = await mapExternalToInternal(parsed, token);
-
-    if (!internalId) return { meta: {} };
-
-    const headers = { ...HEADERS, Authorization: `Bearer ${token}` };
-
+builder.defineMetaHandler(async ({ id, type }) => {
     try {
-        let url;
+        const pure = id.split(':')[0];
 
-        if (type === "movie") {
-            url = `${BASE_URL}/api/movie/${internalId}/${SW_KEY}/`;
-        } else if (type === "series") {
-            url = `${BASE_URL}/api/season/by/serie/${internalId}/${SW_KEY}/`;
-        } else {
-            url = `${BASE_URL}/api/channel/${internalId}/${SW_KEY}/`;
-        }
-
-        const res = await fetch(url, { headers });
+        const res = await fetch(`https://api.themoviedb.org/3/find/tt${pure}?api_key=${TMDB_KEY}`);
         const data = await res.json();
 
-        if (type !== "series") {
-            return {
-                meta: {
-                    id,
-                    type,
-                    name: data.title || data.name,
-                    poster: data.image,
-                    imdb_id: id.startsWith("tt") ? id : null
-                }
-            };
+        const obj = type === 'series' ? data.tv_results?.[0] : data.movie_results?.[0];
+        if (!obj) return { meta: {} };
+
+        const meta = {
+            id,
+            type,
+            name: obj.name || obj.title,
+            poster: `https://image.tmdb.org/t/p/w500${obj.poster_path}`,
+            background: `https://image.tmdb.org/t/p/original${obj.backdrop_path}`,
+            description: obj.overview,
+            videos: []
+        };
+
+        if (type === 'series') {
+            const det = await fetch(`https://api.themoviedb.org/3/tv/${obj.id}?api_key=${TMDB_KEY}`);
+            const detData = await det.json();
+
+            for (const s of detData.seasons || []) {
+                if (s.season_number === 0) continue;
+
+                const sr = await fetch(`https://api.themoviedb.org/3/tv/${obj.id}/season/${s.season_number}?api_key=${TMDB_KEY}`);
+                const sd = await sr.json();
+
+                (sd.episodes || []).forEach(ep => {
+                    meta.videos.push({
+                        id: `${pure}:${ep.season_number}:${ep.episode_number}`,
+                        title: ep.name,
+                        season: ep.season_number,
+                        episode: ep.episode_number
+                    });
+                });
+            }
         }
 
-        // SERIES
-        const videos = [];
-        data.forEach(s => {
-            const sNum = parseInt(s.title.match(/\d+/)) || 1;
-            s.episodes.forEach(e => {
-                const eNum = parseInt(e.title.match(/\d+/)) || 1;
-                videos.push({
-                    id: `${id}:${sNum}:${eNum}`,
-                    title: e.title,
-                    season: sNum,
-                    episode: eNum
-                });
-            });
-        });
-
-        return { meta: { id, type: "series", videos } };
+        return { meta };
 
     } catch {
         return { meta: {} };
@@ -192,44 +177,47 @@ builder.defineMetaHandler(async ({ type, id }) => {
 });
 
 // ================= STREAM =================
-builder.defineStreamHandler(async ({ id }) => {
-    const parsed = parseId(id);
-    const token = await getAuthToken();
-
-    const internalId = await mapExternalToInternal(parsed, token);
-    if (!internalId) return { streams: [] };
-
-    const headers = { ...HEADERS, Authorization: `Bearer ${token}` };
-
+builder.defineStreamHandler(async ({ id, type }) => {
     try {
-        let sources = [];
+        const pure = id.split(':')[0];
+        const season = id.split(':')[1];
+        const episode = id.split(':')[2];
 
-        if (parsed.main.startsWith("CH_")) {
-            const res = await fetch(`${BASE_URL}/api/channel/${internalId}/${SW_KEY}/`, { headers });
-            const data = await res.json();
-            sources = data.sources || [];
-        } else if (!parsed.season) {
-            const res = await fetch(`${BASE_URL}/api/movie/${internalId}/${SW_KEY}/`, { headers });
-            const data = await res.json();
-            sources = data.sources || [];
-        } else {
-            const res = await fetch(`${BASE_URL}/api/season/by/serie/${internalId}/${SW_KEY}/`, { headers });
-            const data = await res.json();
+        const tmdbRes = await fetch(`https://api.themoviedb.org/3/find/tt${pure}?api_key=${TMDB_KEY}`);
+        const tmdbData = await tmdbRes.json();
+        const obj = tmdbData.movie_results?.[0] || tmdbData.tv_results?.[0];
 
-            const season = data.find(s => s.title.includes(parsed.season));
-            const episode = season?.episodes.find(e => e.title.includes(parsed.episode));
+        if (!obj) return { streams: [] };
 
-            sources = episode?.sources || [];
+        const title = obj.title || obj.name;
+        const clean = cleanSearchTitle(title);
+
+        const searchRes = await fetch(`${BASE_URL}/api/search/${encodeURIComponent(clean)}/${SW_KEY}/`, { headers: FULL_HEADERS });
+        const searchData = await searchRes.json();
+
+        const pool = (type === 'series' ? searchData.series : searchData.posters) || [];
+
+        const found = findBestMatch(title, pool);
+        if (!found) return { streams: [] };
+
+        const res = await fetch(`${BASE_URL}/api/${type === 'series' ? 'serie' : 'movie'}/${found.id}/${SW_KEY}/`, { headers: FULL_HEADERS });
+        const data = await res.json();
+
+        if (type === 'series') {
+            const s = data.seasons?.find(x => x.season_number == season);
+            const e = s?.episodes?.find(x => x.episode_number == episode);
+            return {
+                streams: (e?.sources || []).map(src => ({
+                    name: "RECTV",
+                    url: src.url
+                }))
+            };
         }
 
         return {
-            streams: sources.map(s => ({
+            streams: (data.sources || []).map(src => ({
                 name: "RECTV",
-                url: s.url,
-                behaviorHints: {
-                    notWebReady: true,
-                    proxyHeaders: { request: PLAYER_HEADERS }
-                }
+                url: src.url
             }))
         };
 
