@@ -2,13 +2,23 @@ import pkg from "stremio-addon-sdk";
 const { addonBuilder, serveHTTP } = pkg;
 import fetch from "node-fetch";
 
+/* =========================
+   CONFIG
+========================= */
 const PORT = process.env.PORT || 7010;
-
 const BASE_URL = "https://a.prectv70.lol";
 const SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
 const TMDB_KEY = "68e094699525b18a70bab2f86b1fa706";
 
-const FULL_HEADERS = {
+/* =========================
+   🔥 GLOBAL CACHE (EN ÖNEMLİ PARÇA)
+========================= */
+const CACHE = new Map();
+
+/* =========================
+   HEADERS
+========================= */
+const HEADERS = {
     "User-Agent": "okhttp/4.12.0",
     "Accept": "application/json"
 };
@@ -17,17 +27,17 @@ const FULL_HEADERS = {
    MANIFEST (HATASIZ)
 ========================= */
 const manifest = {
-    id: "com.rectv.pro.full",
-    version: "5.0.0",
-    name: "RECTV PRO",
-    description: "Catalog + Scraper Hybrid System",
+    id: "com.rectv.pro.ultra",
+    version: "6.0.0",
+    name: "RECTV PRO ULTRA",
+    description: "Unified Catalog + Scraper System",
     types: ["movie", "series", "tv"],
     resources: ["catalog", "meta", "stream"],
     idPrefixes: ["tt", "CH_"],
 
     catalogs: [
         {
-            id: "live_tv",
+            id: "live",
             type: "tv",
             name: "📺 Canlı TV",
             extra: [{ name: "search" }]
@@ -50,11 +60,11 @@ const manifest = {
 const builder = new addonBuilder(manifest);
 
 /* =========================
-   IMDb → TMDB TITLE
+   TMDB → TITLE
 ========================= */
-async function imdbToTitle(imdbId, type) {
+async function getTitleFromImdb(imdb, type) {
     try {
-        const url = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${TMDB_KEY}&language=tr-TR&external_source=imdb_id`;
+        const url = `https://api.themoviedb.org/3/find/${imdb}?api_key=${TMDB_KEY}&external_source=imdb_id&language=tr-TR`;
         const res = await fetch(url);
         const data = await res.json();
 
@@ -65,18 +75,65 @@ async function imdbToTitle(imdbId, type) {
 }
 
 /* =========================
+   CATALOG
+========================= */
+builder.defineCatalogHandler(async ({ id, type, extra }) => {
+
+    const search = extra?.search || "";
+
+    /* -------- LIVE TV -------- */
+    if (id === "live") {
+        const res = await fetch(`${BASE_URL}/api/search/${search}/${SW_KEY}/`);
+        const data = await res.json();
+
+        return {
+            metas: (data.channels || []).map(ch => {
+                const cid = "CH_" + ch.title.replace(/\s/g, "_");
+
+                CACHE.set(cid, ch.title); // 🔥 CACHE
+
+                return {
+                    id: cid,
+                    type: "tv",
+                    name: ch.title
+                };
+            })
+        };
+    }
+
+    /* -------- MOVIE / SERIES -------- */
+    const res = await fetch(`${BASE_URL}/api/search/${search}/${SW_KEY}/`);
+    const data = await res.json();
+
+    const list = data.series || data.posters || [];
+
+    const metas = list.slice(0, 20).map(item => {
+        const imdb = "tt" + String(item.id).padStart(7, "0");
+
+        CACHE.set(imdb, item.title); // 🔥 CACHE BRIDGE
+
+        return {
+            id: type === "series" ? `${imdb}:1:1` : imdb,
+            type,
+            name: item.title
+        };
+    });
+
+    return { metas };
+});
+
+/* =========================
    META
 ========================= */
 builder.defineMetaHandler(async ({ id, type }) => {
 
     if (id.startsWith("CH_")) {
-        const name = id.replace("CH_", "").replace(/_/g, " ");
+        const name = CACHE.get(id) || id.replace("CH_", "").replace(/_/g, " ");
         return {
             meta: {
                 id,
                 type: "tv",
-                name,
-                description: "Canlı Kanal"
+                name
             }
         };
     }
@@ -85,85 +142,22 @@ builder.defineMetaHandler(async ({ id, type }) => {
         meta: {
             id,
             type,
-            name: id,
+            name: CACHE.get(id.split(":")[0]) || id
         }
     };
 });
 
 /* =========================
-   CATALOG
-   → tt id üretir
-========================= */
-builder.defineCatalogHandler(async ({ id, type, extra }) => {
-
-    const search = extra?.search || "";
-
-    // TV
-    if (id === "live_tv") {
-        const res = await fetch(`${BASE_URL}/api/search/${search}/${SW_KEY}/`);
-        const data = await res.json();
-
-        return {
-            metas: (data.channels || []).map(c => ({
-                id: "CH_" + c.title.replace(/\s/g, "_"),
-                type: "tv",
-                name: c.title
-            }))
-        };
-    }
-
-    // MOVIE / SERIES → IMDb ID üret
-    const url = `${BASE_URL}/api/search/${search}/${SW_KEY}/`;
-    const res = await fetch(url);
-    const data = await res.json();
-
-    const list = data.posters || data.series || [];
-
-    const metas = await Promise.all(list.slice(0, 20).map(async (item) => {
-
-        const imdb = await findFakeImdb(item.title); 
-        // yukarıyı aşağıda açıklıyorum
-
-        if (!imdb) return null;
-
-        return {
-            id: type === "series" ? `${imdb}:1:1` : imdb,
-            type,
-            name: item.title
-        };
-    }));
-
-    return { metas: metas.filter(Boolean) };
-});
-
-/* =========================
-   FAKE IMDb FINDER
-   (senin scraper köprün)
-========================= */
-async function findFakeImdb(title) {
-    // burada TMDB yerine direkt search yapıyoruz
-    try {
-        const url = `https://api.themoviedb.org/3/search/multi?api_key=${TMDB_KEY}&query=${encodeURIComponent(title)}`;
-        const res = await fetch(url);
-        const data = await res.json();
-
-        const r = data.results?.[0];
-        if (!r) return null;
-
-        return r.id ? "tt" + r.id.toString().padStart(7, "0") : null;
-    } catch (e) {
-        return null;
-    }
-}
-
-/* =========================
-   STREAM (ASIL SCRAPER)
+   STREAM (ASIL SİSTEM)
+   ❌ SEARCH YOK
+   ✔ SADECE CACHE + 1 API
 ========================= */
 builder.defineStreamHandler(async ({ id, type }) => {
 
-    // TV CHANNEL
+    /* -------- LIVE TV -------- */
     if (id.startsWith("CH_")) {
-        const name = id.replace("CH_", "").replace(/_/g, " ");
+
+        const name = CACHE.get(id);
 
         const res = await fetch(`${BASE_URL}/api/search/${name}/${SW_KEY}/`);
         const data = await res.json();
@@ -185,10 +179,11 @@ builder.defineStreamHandler(async ({ id, type }) => {
         };
     }
 
-    // MOVIE / SERIES
-    const pureId = id.split(":")[0]; // tt123
+    /* -------- MOVIE / SERIES -------- */
+    const imdb = id.split(":")[0];
 
-    const title = await imdbToTitle(pureId, type);
+    const title = CACHE.get(imdb) || await getTitleFromImdb(imdb, type);
+
     if (!title) return { streams: [] };
 
     const res = await fetch(`${BASE_URL}/api/search/${title}/${SW_KEY}/`);
@@ -201,6 +196,7 @@ builder.defineStreamHandler(async ({ id, type }) => {
     for (let item of pool) {
 
         if (type === "series") {
+
             const s = await fetch(`${BASE_URL}/api/serie/${item.id}/${SW_KEY}/`);
             const d = await s.json();
 
@@ -209,7 +205,6 @@ builder.defineStreamHandler(async ({ id, type }) => {
                     ep.sources?.forEach(src => {
                         streams.push({
                             name: "RECTV",
-                            title: src.title,
                             url: src.url
                         });
                     });
@@ -217,6 +212,7 @@ builder.defineStreamHandler(async ({ id, type }) => {
             });
 
         } else {
+
             const s = await fetch(`${BASE_URL}/api/movie/${item.id}/${SW_KEY}/`);
             const d = await s.json();
 
@@ -233,7 +229,7 @@ builder.defineStreamHandler(async ({ id, type }) => {
 });
 
 /* =========================
-   RUN SERVER
+   RUN
 ========================= */
 const addonInterface = builder.getInterface();
 serveHTTP(addonInterface, { port: PORT });
