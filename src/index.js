@@ -16,7 +16,7 @@ const FULL_HEADERS = {
 const MOVIE_MAP = {"Aksiyon": "1","Aile": "14","Animasyon": "13","Belgesel": "19","Bilim Kurgu": "4","Bilim-Kurgu": "28","Dram": "2","Fantastik": "10",
   "Gerilim": "9","Gizem": "15","Komedi": "3","Korku": "8","Macera": "17","Polisiye - Suç": "7","Romantik": "5","Savaş": "32","Seri Filmler": "43","Suç": "22",
   "Şarj Bitiren İçerikler": "42","Tarih": "21","Tarihi ve Savaş": "12","TV film": "29","Türkçe Altyazı": "27","Türkçe Dublaj": "26","Vahşi Batı": "35","Yerli Dizi / Film": "23"};
- const SERIES_MAP = {"ABC": "59","Aksiyon": "1","Aksiyon & Macera": "31","Adult Swim": "49","Aile": "14","Animasyon": "13","Apple TV+": "51","BBC One": "54",
+const SERIES_MAP = {"ABC": "59","Aksiyon": "1","Aksiyon & Macera": "31","Adult Swim": "49","Aile": "14","Animasyon": "13","Apple TV+": "51","BBC One": "54",
   "Belgesel": "19","bilibili": "74","Bilim Kurgu": "4","Bilim-Kurgu": "28","Bilim Kurgu & Fantazi": "30","Cartoon Network": "68","CBS": "52","Cinemax": "56",
   "Çocuklar": "34","Disney+": "67","Disney Channel": "65","Dram": "2","Fantastik": "10","FOX": "53","Fuji TV": "72","Gerçeklik": "36","Gerilim": "9",
   "Gizem": "15","Hallmark Channel": "50","HBO": "62","HBO Brasil": "66","Komedi": "3","Korku": "8","Macera": "17","NBC": "55","Netflix": "57",
@@ -29,16 +29,16 @@ export const manifest = {
     id: "com.nuvio.rectv.v481.full_complete",
     version: "4.8.1",
     name: "RECTV Pro Ultimate",
-    description: "TV: Sabit Poster & Meta | Film-Dizi: tt ID",
+    description: "TV & Katalog Sayfalama Desteği | tt ID",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
     idPrefixes: ["CH_", "tt"],
     catalogs: [
         { id: "rc_live", type: "tv", name: "📺 RECTV Canlı TV", extra: [{ name: "search" }, { name: "genre", options: Object.keys(TV_MAP) }] },
-        { id: "rc_movie", type: "movie", name: "🎬 RECTV Filmler", extra: [{ name: "search" }, { name: "genre", options: Object.keys(MOVIE_MAP) }] },
-        { id: "rc_series", type: "series", name: "🍿 RECTV Diziler", extra: [{ name: "search" }, { name: "genre", options: Object.keys(SERIES_MAP) }] },
-        { id: "rc_movie_year", type: "movie", name: "📅 Filmler (Yıla Göre)", extra: [{ name: "genre", options: YEARS }, { name: "search" }] },
-        { id: "rc_series_year", type: "series", name: "📅 Diziler (Yıla Göre)", extra: [{ name: "genre", options: YEARS }, { name: "search" }] }
+        { id: "rc_movie", type: "movie", name: "🎬 RECTV Filmler", extra: [{ name: "search" }, { name: "genre", options: Object.keys(MOVIE_MAP) }, { name: "skip" }] },
+        { id: "rc_series", type: "series", name: "🍿 RECTV Diziler", extra: [{ name: "search" }, { name: "genre", options: Object.keys(SERIES_MAP) }, { name: "skip" }] },
+        { id: "rc_movie_year", type: "movie", name: "📅 Filmler (Yıla Göre)", extra: [{ name: "genre", options: YEARS }, { name: "search" }, { name: "skip" }] },
+        { id: "rc_series_year", type: "series", name: "📅 Diziler (Yıla Göre)", extra: [{ name: "genre", options: YEARS }, { name: "search" }, { name: "skip" }] }
     ]
 };
 
@@ -59,9 +59,12 @@ async function findPureImdbId(title, type) {
     return null;
 }
 
-// --- KATALOG HANDLER (POSTERLERİN ANINDA GÖRÜNMESİ İÇİN) ---
+// --- KATALOG HANDLER (SKIP DESTEĞİ İLE) ---
 builder.defineCatalogHandler(async (args) => {
     const { id, type, extra } = args;
+    const skip = parseInt(extra?.skip || 0); // Kullanıcının kaçıncı içerikten başlayacağı
+    const count = 20; // Her sayfada kaç içerik gösterilecek
+
     try {
         if (id === "rc_live") {
             const gid = (extra?.genre) ? (TV_MAP[extra.genre] || "3") : "3";
@@ -72,15 +75,8 @@ builder.defineCatalogHandler(async (args) => {
             
             return { metas: channels.map(ch => ({
                 id: `CH_${(ch.title || ch.name).replace(/\s+/g, '_')}`,
-                type: "tv", 
-                name: ch.title || ch.name, 
-                poster: ch.image,
-                background: ch.image,
-                logo: ch.image,
-                posterShape: "landscape",
-                description: `${ch.title} - Canlı Yayın`,
-                runtime: "Canlı Yayın",
-                releaseInfo: "LIVE"
+                type: "tv", name: ch.title || ch.name, poster: ch.image, background: ch.image, logo: ch.image,
+                posterShape: "landscape", description: `${ch.title} - Canlı Yayın`, runtime: "Canlı Yayın", releaseInfo: "LIVE"
             })) };
         }
 
@@ -88,19 +84,26 @@ builder.defineCatalogHandler(async (args) => {
         let fetchUrl;
         if (extra?.search) {
             fetchUrl = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
-        } else if (id.includes("_year")) {
-            fetchUrl = `${BASE_URL}/api/${path}/by/filtres/0/created/0/${SW_KEY}/`;
         } else {
             const map = type === 'series' ? SERIES_MAP : MOVIE_MAP;
-            const gid = (extra?.genre) ? (map[extra.genre] || "0") : "0";
+            const gid = (extra?.genre && !id.includes("_year")) ? (map[extra.genre] || "0") : "0";
             fetchUrl = `${BASE_URL}/api/${path}/by/filtres/${gid}/created/0/${SW_KEY}/`;
         }
 
         const res = await fetch(fetchUrl, { headers: FULL_HEADERS });
         const data = await res.json();
-        const rawItems = extra?.search ? (type === 'series' ? data.series : data.posters) : (Array.isArray(data) ? data : data.posters || []);
+        let rawItems = extra?.search ? (type === 'series' ? data.series : data.posters) : (Array.isArray(data) ? data : data.posters || []);
 
-        const metas = await Promise.all((rawItems || []).slice(0, 15).map(async (item) => {
+        // Yıla göre filtreleme
+        if (extra?.genre && id.includes("_year")) {
+            rawItems = (rawItems || []).filter(item => item.year && item.year.toString() === extra.genre.toString());
+        }
+
+        // --- SKIP (PAGINATION) MANTIĞI ---
+        // Toplam listeden skip kadar atla ve count kadarını al
+        const pagedItems = (rawItems || []).slice(skip, skip + count);
+
+        const metas = await Promise.all(pagedItems.map(async (item) => {
             const title = item.title || item.name;
             const pureId = await findPureImdbId(title, type);
             if (!pureId) return null;
@@ -123,11 +126,9 @@ builder.defineMetaHandler(async ({ id, type }) => {
             const ch = (data.channels || []).find(c => (c.title || c.name).replace(/\s+/g, '_') === id.replace("CH_", ""));
             if (ch) {
                 return { meta: {
-                    id, type: "tv", name: ch.title || ch.name, 
-                    poster: ch.image, background: ch.image, logo: ch.image,
+                    id, type: "tv", name: ch.title || ch.name, poster: ch.image, background: ch.image, logo: ch.image,
                     description: `${ch.title} kanalını kesintisiz izleyin.`,
-                    genres: [ch.label || "Canlı TV"],
-                    releaseInfo: "LIVE", runtime: "Canlı Yayın", posterShape: "landscape"
+                    genres: [ch.label || "Canlı TV"], releaseInfo: "LIVE", runtime: "Canlı Yayın", posterShape: "landscape"
                 }};
             }
         } catch (e) {}
