@@ -207,6 +207,6 @@ builder.defineStreamHandler(async (args) => {
     } catch (e) {}
     return { streams: [] };
 });
-export default addonInterface;
+
 const addonInterface = builder.getInterface();
 serveHTTP(addonInterface, { port: PORT });
