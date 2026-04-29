@@ -27,9 +27,9 @@ const YEARS = Array.from({ length: 30 }, (_, i) => (2026 - i).toString());
 
 export const manifest = {
     id: "com.nuvio.rectv.v481.full_complete",
-    version: "4.8.1",
+    version: "4.9.1",
     name: "RECTV Pro Ultimate",
-    description: "TV: Alt Tire ID | Film-Dizi: tt ID & Meta",
+    description: "TV: Detaylı Meta | Film-Dizi: tt ID",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
     idPrefixes: ["CH_", "tt"],
@@ -54,7 +54,6 @@ async function findPureImdbId(title, type) {
         if (data.results?.[0]) {
             const ext = await fetch(`https://api.themoviedb.org/3/${sType}/${data.results[0].id}/external_ids?api_key=${TMDB_KEY}`);
             const extData = await ext.json();
-            // Başına tt ekleyerek döndür
             return extData.imdb_id ? extData.imdb_id : null;
         }
     } catch (e) { return null; }
@@ -75,7 +74,13 @@ builder.defineCatalogHandler(async (args) => {
             const channels = extra?.search ? (data.channels || []) : (data || []);
             return { metas: channels.map(ch => ({
                 id: `CH_${(ch.title || ch.name).replace(/\s+/g, '_')}`,
-                type: "tv", name: ch.title || ch.name, poster: ch.image, posterShape: "landscape"
+                type: "tv", 
+                name: ch.title || ch.name, 
+                poster: ch.image, 
+                posterShape: "landscape",
+                genres: [ch.label || "Canlı TV"],
+                releaseInfo: "LIVE",
+                runtime: "Canlı Yayın"
             })) };
         }
 
@@ -105,7 +110,6 @@ builder.defineCatalogHandler(async (args) => {
             const pureId = await findPureImdbId(title, type);
             if (!pureId) return null;
             return {
-                // Burada ttID:sezon:bolum şeklinde tt eklenmiş oldu
                 id: type === 'series' ? `${pureId}:1:1` : pureId,
                 type: type, name: title, poster: item.image || item.thumbnail
             };
@@ -124,8 +128,16 @@ builder.defineMetaHandler(async ({ id, type }) => {
             const ch = (data.channels || []).find(c => (c.title || c.name).replace(/\s+/g, '_') === id.replace("CH_", ""));
             if (ch) {
                 return { meta: {
-                    id, type: "tv", name: ch.title || ch.name, poster: ch.image, background: ch.image,
-                    description: `📺 Kanal: ${ch.title}\n⭐ Puan: ${ch.rating}\n📌 Kategori: ${ch.label}\n📅 Yıl: ${ch.sublabel || "Canlı"}`,
+                    id, 
+                    type: "tv", 
+                    name: ch.title || ch.name, 
+                    poster: ch.image, 
+                    background: ch.image,
+                    logo: ch.image,
+                    description: `${ch.title} kanalını RECTV üzerinden canlı izleyin.`,
+                    genres: [ch.label || "Canlı TV"],
+                    releaseInfo: "LIVE",
+                    runtime: "Canlı Yayın",
                     posterShape: "landscape"
                 }};
             }
@@ -133,7 +145,6 @@ builder.defineMetaHandler(async ({ id, type }) => {
     }
 
     try {
-        // id zaten "tt..." ile başladığı için direkt kullanıyoruz
         const pureId = id.split(':')[0]; 
         const tmdbRes = await fetch(`https://api.themoviedb.org/3/find/${pureId}?api_key=${TMDB_KEY}&external_source=imdb_id&language=tr-TR`);
         const tmdbData = await tmdbRes.json();
