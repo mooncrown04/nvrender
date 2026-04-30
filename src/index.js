@@ -77,11 +77,25 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
             } else {
                 url = `${BASE_URL}/api/channel/by/filtres/6/0/0/${SW_KEY}/`;
             }
-        } else if (extra?.search) {
-            url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
-        } else {
-            url = `${BASE_URL}/api/${type === 'movie' ? 'movie' : 'serie'}/by/filtres/0/created/${extra?.skip || 0}/${SW_KEY}/`;
-        }
+        } 
+		// Sorunlu satırı şu blokla değiştiriyoruz:
+  else if (extra?.search) {
+    url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
+} else {
+    // Tipi belirle: Stremio 'series' der, RECTV 'serie' bekler.
+    let rectvType;
+    if (type === 'movie') {
+        rectvType = 'movie';
+    } else if (type === 'series') {
+        rectvType = 'serie';
+    } else {
+        rectvType = 'channel'; // TV/Canlı yayın durumu için
+    }
+
+    url = `${BASE_URL}/api/${rectvType}/by/filtres/0/created/${extra?.skip || 0}/${SW_KEY}/`;
+}
+		
+		
         
         const res = await fetch(url, { headers: authHeaders });
         const data = await res.json();
