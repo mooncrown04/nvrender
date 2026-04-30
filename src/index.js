@@ -71,7 +71,9 @@ async function getAuthToken() {
 function getCleanId(id) {
     if (!id) return "";
     return id.split(':').shift()
-             .replace('tmdb:', '')
+             .replace('rectv_movie_', '')   // Film prefixini siler
+             .replace('rectv_series_', '')  // Dizi prefixini siler
+			 .replace('tmdb:', '')
              .replace('CH_', '')
              .replace('tt', '')
              .split('_').pop();
