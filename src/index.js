@@ -174,8 +174,13 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
                 return { 
                     id: (actualType === "tv") ? `CH_${item.id}` : `rectv_${actualType}_${item.id}`, 
                     type: actualType, 
-                    name: item.title || item.name, 
-                    poster: item.image || item.thumbnail,
+                    name: item.title, 
+                    poster: item.image,
+					background:  item.image,                  
+                    logo:item.image,
+					description: (item.categories && item.categories.length > 0) 
+                    ? `Kategori: ${item.categories.map(c => c.title).join(', ')}` 
+                    : (extra.genre || "Genel")
                     posterShape: (actualType === "tv") ? "landscape" : "poster" 
                 };
             }) 
@@ -212,8 +217,8 @@ builder.defineMetaHandler(async ({ type, id }) => {
                     id: id,
                     type: 'tv',
                     name: data.name || data.title || "Canlı Kanal",
-                    poster: data.thumbnail || data.image,
-                    background: data.image || data.thumbnail,
+                    poster: data.image,
+                    background: data.cover,
                     description: data.description || "Kesintisiz Canlı Yayın",
                     posterShape: "landscape"
                 }
@@ -275,34 +280,59 @@ builder.defineStreamHandler(async ({ id }) => {
 
     try {
         let sources = [];
+        let contentTitle = ""; // Kanal veya içerik ismini tutmak için
+
         if (id.startsWith('CH_')) {
             const res = await fetch(`${BASE_URL}/api/channel/by/${cleanId}/${SW_KEY}/`, { headers });
             const data = await res.json();
+            // Kanal ismini alıyoruz (Örn: ATV)
+            contentTitle = data.title || data.name || "Canlı TV";
             sources = data.sources || (data.url ? [{ url: data.url }] : []);
         } else if (!id.includes(':')) {
             const res = await fetch(`${BASE_URL}/api/movie/by/${cleanId}/${SW_KEY}/`, { headers });
             const data = await res.json();
+            contentTitle = data.title || data.name || "Film";
             sources = data.sources || [];
         } else {
             const res = await fetch(`${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`, { headers });
             const data = await res.json();
             const season = data.find(s => (s.title.match(/\d+/) || [])[0] == parts[1]);
             const episode = season?.episodes.find(e => (e.title.match(/\d+/) || [])[0] == parts[2]);
+            contentTitle = episode?.title || "Dizi";
             sources = episode?.sources || [];
         }
 
         return {
-            streams: sources.map(src => ({
-                name: "RECTV",
-                title: id.startsWith('CH_') ? "CANLI YAYIN" : "AHD",
-                url: src.url,
-                behaviorHints: { 
-                    notWebReady: true, 
-                    proxyHeaders: { "request": PLAYER_HEADERS } 
+            streams: sources.map(src => {
+                // EMOJI VE DİL KONTROLÜ
+                let languageIcon = "";
+                const srcTitle = (src.title || "").toLowerCase();
+                
+                if (srcTitle.includes("dublaj") || srcTitle.includes("tr")) {
+                    languageIcon = "🇹🇷 "; // Türk Bayrağı
+                } else if (srcTitle.includes("altyazı") || srcTitle.includes("sub")) {
+                    languageIcon = "🌐 "; // Dünya Emojisi
                 }
-            }))
+
+                return {
+                    // NAME: Burası kalın ve büyük görünür, Kanal/Film ismi gelmeli
+                    name: contentTitle, 
+                    
+                    // TITLE: Sağlayıcı ismi (RECTV) + Kalite + Dil emojisi
+                    title: `RECTV | ${src.size || "HD"} | ${languageIcon}${src.title || ""}`,
+                    
+                    url: src.url,
+                    behaviorHints: { 
+                        notWebReady: true, 
+                        proxyHeaders: { "request": PLAYER_HEADERS } 
+                    }
+                };
+            })
         };
-    } catch (e) { return { streams: [] }; }
+    } catch (e) { 
+        console.error(e);
+        return { streams: [] }; 
+    }
 });
 
 serveHTTP(builder.getInterface(), { port: PORT });
