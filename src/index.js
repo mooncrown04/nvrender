@@ -216,9 +216,10 @@ builder.defineMetaHandler(async ({ type, id }) => {
                 meta: {
                     id: id,
                     type: 'tv',
-                    name: data.name || data.title || "Canlı Kanal",
+                    name: data.title || "Canlı Kanal",
                     poster: data.image,
-                    background: data.cover,
+                    logo: data.image,
+					background: data.cover || data.image,
                     description: data.description || "Kesintisiz Canlı Yayın",
                     posterShape: "landscape"
                 }
@@ -230,9 +231,10 @@ builder.defineMetaHandler(async ({ type, id }) => {
                 meta: {
                     id: id,
                     type: 'movie',
-                    name: data.title || data.name || "Film",
-                    poster: data.image || data.thumbnail,
-                    background: data.backdrop || data.image,
+                    name: data.title,
+                    poster: data.image,
+                    logo: data.image,
+					background: data.cover||data.image,
                     description: data.description || "Film detayı yükleniyor...",
                     releaseInfo: data.year || ""
                 }
@@ -248,6 +250,11 @@ builder.defineMetaHandler(async ({ type, id }) => {
                     videos.push({
                         id: `${id}:${sNum}:${eNum}`,
                         title: ep.title,
+						poster: ep.image,
+                        logo: ep.image,
+					    background: ep.cover||ep.image,
+						description: ep.description || data.description || "Dizi detayı yükleniyor...",
+						releaseInfo: (ep.created_at || ep.year || data.year || "").toString(),
                         season: sNum,
                         episode: eNum
                     });
@@ -259,8 +266,14 @@ builder.defineMetaHandler(async ({ type, id }) => {
             meta: { 
                 id: id, 
                 type: 'series', 
-                name: (Array.isArray(data) && data[0]) ? "Dizi İçeriği" : "Dizi", 
-                videos: videos 
+                name: data.title || "Dizi İçeriği", 
+                poster: data.image ||"",
+                background: data.cover || data.image || "",
+                logo: data.logo || "",
+				videos: videos, 
+				description: data.description || "",
+                releaseInfo: data.year ? data.year.toString() : "",
+                genres: (data.genres || []).map(g => g.title)
             } 
         };
 
@@ -285,13 +298,12 @@ builder.defineStreamHandler(async ({ id }) => {
         if (id.startsWith('CH_')) {
             const res = await fetch(`${BASE_URL}/api/channel/by/${cleanId}/${SW_KEY}/`, { headers });
             const data = await res.json();
-            // Kanal ismini alıyoruz (Örn: ATV)
-            contentTitle = data.title || data.name || "Canlı TV";
+            contentTitle = data.title || "Canlı TV";
             sources = data.sources || (data.url ? [{ url: data.url }] : []);
         } else if (!id.includes(':')) {
             const res = await fetch(`${BASE_URL}/api/movie/by/${cleanId}/${SW_KEY}/`, { headers });
             const data = await res.json();
-            contentTitle = data.title || data.name || "Film";
+            contentTitle = data.title || "Film";
             sources = data.sources || [];
         } else {
             const res = await fetch(`${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`, { headers });
