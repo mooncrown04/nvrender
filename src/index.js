@@ -40,7 +40,7 @@ const manifest = {
     id: "com.mooncrown.rectv.v23",
     version: "8.5.0",
     name: "RECTV Ultimate Fix",
-    description: "dizi",
+    description: "dizi-film",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
     idPrefixes: ["rectv_", "tt", "CH_", "tmdb:"],
@@ -211,6 +211,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
         const res = await fetch(url, { headers });
         const data = await res.json();
 
+        // --- CANLI TV / KANAL KISMI ---
         if (id.startsWith('CH_') || type === 'tv') {
             return {
                 meta: {
@@ -219,13 +220,14 @@ builder.defineMetaHandler(async ({ type, id }) => {
                     name: data.title || "Canlı Kanal",
                     poster: data.image,
                     logo: data.image,
-					background: data.cover || data.image,
-                    description: data.description || "Kesintisiz Canlı Yayın",
+                    background: data.cover || data.image,
+                    description: data.description || `${data.title || ""} Kesintisiz Canlı Yayın`,
                     posterShape: "landscape"
                 }
             };
         }
 
+        // --- FİLM KISMI ---
         if (type === 'movie') {
             return {
                 meta: {
@@ -234,46 +236,61 @@ builder.defineMetaHandler(async ({ type, id }) => {
                     name: data.title,
                     poster: data.image,
                     logo: data.image,
-					background: data.cover||data.image,
+                    background: data.cover || data.image,
                     description: data.description || "Film detayı yükleniyor...",
                     releaseInfo: data.year || ""
                 }
             };
         }
 
+        // --- DİZİ (SERIES) KISMI ---
         const videos = [];
-        if (Array.isArray(data)) {
+        // Eğer data bir array ise ilk elemanı (data[0]) referans alıyoruz
+        const isDataArray = Array.isArray(data);
+        const mainData = isDataArray ? data[0] : data;
+
+        if (isDataArray) {
             data.forEach(s => {
-                const sNum = parseInt(s.title.match(/\d+/) || 1);
-                s.episodes.forEach(ep => {
-                    const eNum = parseInt(ep.title.match(/\d+/) || 1);
-                    videos.push({
-                        id: `${id}:${sNum}:${eNum}`,
-                        title: ep.title,
-						poster: ep.image,
-                        logo: ep.image,
-					    background: ep.cover||ep.image,
-						description: ep.description || data.description || "Dizi detayı yükleniyor...",
-						releaseInfo: (ep.created_at || ep.year || data.year || "").toString(),
-                        season: sNum,
-                        episode: eNum
+                // Sezon numarasını başlıktan çek (Örn: "1. Sezon" -> 1)
+                const sMatch = s.title ? s.title.match(/\d+/) : null;
+                const sNum = sMatch ? parseInt(sMatch[0]) : 1;
+
+                if (s.episodes && Array.isArray(s.episodes)) {
+                    s.episodes.forEach(ep => {
+                        // Bölüm numarasını başlıktan çek
+                        const eMatch = ep.title ? ep.title.match(/\d+/) : null;
+                        const eNum = eMatch ? parseInt(eMatch[0]) : 1;
+
+                        videos.push({
+                            id: `${id}:${sNum}:${eNum}`,
+                            title: ep.title || `${eNum}. Bölüm`,
+                            poster: ep.image || mainData?.image,
+                            logo: ep.image || mainData?.image,
+                            background: ep.cover || ep.image || mainData?.cover,
+                            description: ep.description || mainData?.description || "Bölüm detayı yükleniyor...",
+                            releaseInfo: (ep.created_at || ep.year || mainData?.year || "").toString(),
+                            season: sNum,
+                            episode: eNum
+                        });
                     });
-                });
+                }
             });
         }
-        
+
         return { 
             meta: { 
                 id: id, 
                 type: 'series', 
-                name: data.title || "Dizi İçeriği", 
-                poster: data.image ||"",
-                background: data.cover || data.image || "",
-                logo: data.logo || "",
-				videos: videos, 
-				description: data.description || "",
-                releaseInfo: data.year ? data.year.toString() : "",
-                genres: (data.genres || []).map(g => g.title)
+                // data[0].title yerine genellikle API'lerde 'serie_title' veya 'name' olur, 
+                // ama senin yapında mainData.title en mantıklı aday.
+                name: mainData?.title || mainData?.name || "Dizi İçeriği", 
+                poster: mainData?.image || "",
+                background: mainData?.cover || mainData?.image || "",
+                logo: mainData?.logo || mainData?.image || "",
+                videos: videos, 
+                description: mainData?.description || "",
+                releaseInfo: mainData?.year ? mainData.year.toString() : "",
+                genres: (mainData?.genres || []).map(g => g.title || g)
             } 
         };
 
