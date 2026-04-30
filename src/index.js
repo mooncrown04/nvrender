@@ -31,7 +31,7 @@ const manifest = {
     id: "com.mooncrown.rectv.v23",
     version: "8.0.0",
     name: "RECTV Fix Final",
-    description: "Canlı TV Katalog & TMDB/CH_ ID Fix-moon",
+    description: "Canlı TV Katalog & TMDB/CH_ ID Fix",
     resources: ["catalog", "meta", "stream"],
     // Desteklenen içerik türleri
     types: ["movie", "series", "tv"],
@@ -127,7 +127,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
         let url;
         // 1. ADIM: Doğru API URL'sini belirle
         if (id.startsWith('CH_')) {
-            url = `${BASE_URL}/api/channel/${cleanId}/${SW_KEY}/`;
+            url = `${BASE_URL}/api/channel/by/${cleanId}/${SW_KEY}/`;
         } else if (type === 'movie') {
             url = `${BASE_URL}/api/movie/by/${cleanId}/${SW_KEY}/`;
         } else {
@@ -213,7 +213,7 @@ builder.defineStreamHandler(async ({ id }) => {
         let sources = [];
         // ID türüne göre kaynak video linkini API'den sorgula
         if (id.startsWith('CH_')) {
-            const res = await fetch(`${BASE_URL}/api/channel/${cleanId}/${SW_KEY}/`, { headers });
+            const res = await fetch(`${BASE_URL}/api/channel/by/${cleanId}/${SW_KEY}/`, { headers });
             const data = await res.json();
             sources = data.sources || (data.url ? [{ url: data.url }] : []);
         } else if (!id.includes(':')) {
