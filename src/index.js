@@ -2,6 +2,22 @@ import pkg from 'stremio-addon-sdk';
 const { addonBuilder, serveHTTP } = pkg;
 import fetch from 'node-fetch';
 
+// --- SABİT VERİLER ---
+const MOVIE_MAP = {"Aksiyon": "1","Aile": "14","Animasyon": "13","Belgesel": "19","Bilim Kurgu": "4","Bilim-Kurgu": "28","Dram": "2","Fantastik": "10",
+  "Gerilim": "9","Gizem": "15","Komedi": "3","Korku": "8","Macera": "17","Polisiye - Suç": "7","Romantik": "5","Savaş": "32","Seri Filmler": "43","Suç": "22",
+  "Şarj Bitiren İçerikler": "42","Tarih": "21","Tarihi ve Savaş": "12","TV film": "29","Türkçe Altyazı": "27","Türkçe Dublaj": "26","Vahşi Batı": "35","Yerli Dizi / Film": "23"};
+
+const SERIES_MAP = {"ABC": "59","Aksiyon": "1","Aksiyon & Macera": "31","Adult Swim": "49","Aile": "14","Animasyon": "13","Apple TV+": "51","BBC One": "54",
+  "Belgesel": "19","bilibili": "74","Bilim Kurgu": "4","Bilim-Kurgu": "28","Bilim Kurgu & Fantazi": "30","Cartoon Network": "68","CBS": "52","Cinemax": "56",
+  "Çocuklar": "34","Disney+": "67","Disney Channel": "65","Dram": "2","Fantastik": "10","FOX": "53","Fuji TV": "72","Gerçeklik": "36","Gerilim": "9",
+  "Gizem": "15","Hallmark Channel": "50","HBO": "62","HBO Brasil": "66","Komedi": "3","Korku": "8","Macera": "17","NBC": "55","Netflix": "57",
+  "NHK Educational TV": "60","NIPPON TV": "63","Pembe Dizi": "37","Polisiye - Suç": "7","Romantik": "5","Savaş": "32","Savaş & Politik": "33","Showtime": "58",
+  "Suç": "22","Syfy": "61","Şarj Bitiren İçerikler": "42","Talk": "39","Tarih": "21","Tarihi ve Savaş": "12","TSC": "69","TV Tokyo": "71","Vahşi Batı": "35","Western": "25","Yerli Dizi / Film": "23"};  
+
+const TV_MAP = { "Spor": "1", "Belgesel": "2", "Ulusal": "3", "Haber": "4", "Sinema": "6" };
+
+const YEARS = Array.from({ length: 30 }, (_, i) => (2026 - i).toString());
+
 // --- YAPILANDIRMA AYARLARI ---
 const PORT = process.env.PORT || 7010;
 const BASE_URL = "https://a.prectv70.lol";
@@ -33,10 +49,31 @@ const manifest = {
             id: "rc_live", 
             type: "tv", 
             name: "RECTV Canlı TV",
-            extra: [{ name: "search" }] // TV sekmesine arama kutusu eklendi
+            extra: [
+                { name: "search" },
+                { name: "genre", options: Object.keys(TV_MAP) }
+            ]
         },
-        { id: "rc_movie", type: "movie", name: "RECTV Filmler", extra: [{ name: "search" }, { name: "skip" }] },
-        { id: "rc_series", type: "series", name: "RECTV Diziler", extra: [{ name: "search" }, { name: "skip" }] }
+        { 
+            id: "rc_movie", 
+            type: "movie", 
+            name: "RECTV Filmler", 
+            extra: [
+                { name: "search" }, 
+                { name: "skip" },
+                { name: "genre", options: Object.keys(MOVIE_MAP) }
+            ] 
+        },
+        { 
+            id: "rc_series", 
+            type: "series", 
+            name: "RECTV Diziler", 
+            extra: [
+                { name: "search" }, 
+                { name: "skip" },
+                { name: "genre", options: Object.keys(SERIES_MAP) }
+            ] 
+        }
     ]
 };
 
@@ -70,37 +107,34 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
         const authHeaders = { ...HEADERS, 'Authorization': `Bearer ${token}` };
         
         let url;
-        // URL Belirleme Mantığı
+        
         if (id === "rc_live" || type === "tv") {
             if (extra?.search) {
                 url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
+            } else if (extra?.genre) {
+                const genreId = TV_MAP[extra.genre] || "6";
+                url = `${BASE_URL}/api/channel/by/filtres/${genreId}/0/0/${SW_KEY}/`;
             } else {
                 url = `${BASE_URL}/api/channel/by/filtres/6/0/0/${SW_KEY}/`;
             }
         } 
-		// Sorunlu satırı şu blokla değiştiriyoruz:
-  else if (extra?.search) {
-    url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
-} else {
-    // Tipi belirle: Stremio 'series' der, RECTV 'serie' bekler.
-    let rectvType;
-    if (type === 'movie') {
-        rectvType = 'movie';
-    } else if (type === 'series') {
-        rectvType = 'serie';
-    } else {
-        rectvType = 'channel'; // TV/Canlı yayın durumu için
-    }
+        else if (extra?.search) {
+            url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
+        } else {
+            let rectvType = (type === 'series') ? 'serie' : 'movie';
+            let genreId = "0";
+            
+            if (extra?.genre) {
+                if (type === 'movie') genreId = MOVIE_MAP[extra.genre] || "0";
+                else if (type === 'series') genreId = SERIES_MAP[extra.genre] || "0";
+            }
 
-    url = `${BASE_URL}/api/${rectvType}/by/filtres/0/created/${extra?.skip || 0}/${SW_KEY}/`;
-}
-		
-		
+            url = `${BASE_URL}/api/${rectvType}/by/filtres/${genreId}/created/${extra?.skip || 0}/${SW_KEY}/`;
+        }
         
         const res = await fetch(url, { headers: authHeaders });
         const data = await res.json();
         
-        // Verileri bir havuzda topla ve _origin etiketi ekle
         const items = [];
         if (data.channels) data.channels.forEach(i => items.push({ ...i, _origin: 'tv' }));
         if (data.posters) data.posters.forEach(i => items.push({ ...i, _origin: 'movie' }));
@@ -110,16 +144,13 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
             data.forEach(i => items.push({ ...i, _origin: type }));
         }
 
-        // Filtreleme: Arama sonuçlarında filmlerin TV kategorisinde çıkmasını engelle
         let filteredItems = items.filter(item => {
-            // API'den gelen ham 'type' bilgisini kontrol et
             const apiType = item.type; 
-            
             if (id === "rc_live" || type === "tv") {
                 return (apiType === "channel" || apiType === "m3u8" || item._origin === 'tv');
             }
             if (type === "movie") {
-                return (apiType === "movie" || item._origin === 'movie')&& item.is_series !== 1;
+                return (apiType === "movie" || item._origin === 'movie') && item.is_series !== 1;
             }
             if (type === "series") {
                 return (apiType === "serie" || item._origin === 'series');
@@ -130,8 +161,6 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
         return { 
             metas: filteredItems.map(item => {
                 let actualType;
-                
-                // KESİN TİP BELİRLEME (JSON'daki 'type' alanına göre)
                 if (item.type === "movie") {
                     actualType = "movie";
                 } else if (item.type === "serie" || item.is_series === 1 || item._origin === 'series') {
@@ -139,7 +168,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
                 } else if (item.type === "channel" || item.type === "m3u8" || item._origin === 'tv') {
                     actualType = "tv";
                 } else {
-                    actualType = type; // Fallback
+                    actualType = type;
                 }
 
                 return { 
