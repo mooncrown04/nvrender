@@ -74,13 +74,14 @@ function getCleanId(id) {
              .replace('rectv_movie_', '')   // Film prefixini siler
              .replace('rectv_series_', '')  // Dizi prefixini siler
 			 .replace('tmdb:', '')
-             .replace('CH_', '')
+            // .replace('CH_', '')
              .replace('tt', '')
              .split('_').pop();
 }
 
 // --- 1. KATALOG İŞLEYİCİ (Catalog Handler) ---
 // Kullanıcı eklenti ana sayfasına girdiğinde listeleri çeker.
+
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
     try {
         const token = await getAuthToken();
@@ -100,20 +101,41 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
         const res = await fetch(url, { headers: authHeaders });
         const data = await res.json();
         
-        // API'den gelen farklı yapıdaki verileri (kanal, film, dizi) tek bir listeye normalize et
+        // API'den gelen veriyi normalize et
         const items = data.channels || data.posters || data.series || (Array.isArray(data) ? data : []);
         
         return { 
-            metas: items.map(item => ({ 
-                // ID Belirleme: TV ise 'CH_' prefixi kullanılır
-                id: (type === "tv") ? `CH_${item.id}` : `rectv_${type}_${item.id}`, 
-                type: type, 
-                name: item.title || item.name, 
-                poster: item.image || item.thumbnail,
-                posterShape: "landscape" // Kanallar için yatay görünüm
-            })) 
+            metas: items.map(item => {
+                // TÜR BELİRLEME: 
+                // Eğer TV kategorisindeysek zaten 'tv'dir. 
+                // Arama yapılıyorsa, objenin içindeki 'is_serie' gibi alanlara bakarak gerçek türü bulmalıyız.
+                let actualType = type; 
+
+                if (type !== "tv" && extra?.search) {
+                    // API'den gelen objede genellikle diziler için ayırıcı bir veri bulunur
+                    // Eğer 'serie' kelimesi geçiyorsa veya posters dışında bir alandaysa series yap
+                    if (item.is_series === 1 || item.type === 'serie' || (data.series && data.series.includes(item))) {
+                        actualType = "series";
+                    } else {
+                        actualType = "movie";
+                    }
+                }
+
+                return { 
+                    // ID: TV ise CH_id, değilse rectv_tür_id (rectv_movie_123 veya rectv_series_123)
+                    id: (actualType === "tv") ? `CH_${item.id}` : `rectv_${actualType}_${item.id}`, 
+                    type: actualType, 
+                    name: item.title || item.name, 
+                    poster: item.image || item.thumbnail,
+                    // Görünüm: Kanallar için yatay (landscape), filmler/diziler için dikey (poster)
+                    posterShape: (actualType === "tv") ? "landscape" : "poster" 
+                };
+            }) 
         };
-    } catch (e) { return { metas: [] }; }
+    } catch (e) { 
+        console.error("Katalog Hatası:", e);
+        return { metas: [] }; 
+    }
 });
 
 // --- 2. META VERİ İŞLEYİCİ (Meta Handler) ---
