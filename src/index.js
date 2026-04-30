@@ -22,32 +22,21 @@ const PLAYER_HEADERS = {
 // --- ADDON MANİFESTOSU ---
 const manifest = {
     id: "com.mooncrown.rectv.v23",
-    version: "8.1.0",
-    name: "RECTV Ultimate",
-    description: "Bağımsız Canlı TV, Film ve Dizi Katalogları",
+    version: "8.5.0",
+    name: "RECTV Ultimate Fix",
+    description: "Canlı TV Arama & Kesin Tip Ayrımı (Fix)",
     resources: ["catalog", "meta", "stream"],
-    // Buradaki sıralama sol menüdeki önceliği belirleyebilir
-    types: ["tv", "movie", "series"], 
+    types: ["movie", "series", "tv"],
     idPrefixes: ["rectv_", "tt", "CH_", "tmdb:"],
     catalogs: [
         { 
             id: "rc_live", 
             type: "tv", 
             name: "RECTV Canlı TV",
-            extra: [{ name: "search" }] 
+            extra: [{ name: "search" }] // TV sekmesine arama kutusu eklendi
         },
-        { 
-            id: "rc_movie", 
-            type: "movie", 
-            name: "RECTV Filmler", 
-            extra: [{ name: "search" }, { name: "skip" }] 
-        },
-        { 
-            id: "rc_series", 
-            type: "series", 
-            name: "RECTV Diziler", 
-            extra: [{ name: "search" }, { name: "skip" }] 
-        }
+        { id: "rc_movie", type: "movie", name: "RECTV Filmler", extra: [{ name: "search" }, { name: "skip" }] },
+        { id: "rc_series", type: "series", name: "RECTV Diziler", extra: [{ name: "search" }, { name: "skip" }] }
     ]
 };
 
@@ -73,7 +62,7 @@ function getCleanId(id) {
              .split('_').pop();
 }
 
-// --- 1. KATALOG İŞLEYİCİ ---
+// --- 1. KATALOG İŞLEYİCİ (Catalog Handler) ---
 
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
     try {
@@ -81,7 +70,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
         const authHeaders = { ...HEADERS, 'Authorization': `Bearer ${token}` };
         
         let url;
-        // URL Belirleme
+        // URL Belirleme Mantığı
         if (id === "rc_live" || type === "tv") {
             if (extra?.search) {
                 url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
@@ -97,6 +86,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
         const res = await fetch(url, { headers: authHeaders });
         const data = await res.json();
         
+        // Verileri bir havuzda topla ve _origin etiketi ekle
         const items = [];
         if (data.channels) data.channels.forEach(i => items.push({ ...i, _origin: 'tv' }));
         if (data.posters) data.posters.forEach(i => items.push({ ...i, _origin: 'movie' }));
@@ -106,20 +96,37 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
             data.forEach(i => items.push({ ...i, _origin: type }));
         }
 
-        // Filtreleme: TV sekmesinde sadece kanallar, Filmde sadece filmler...
+        // Filtreleme: Arama sonuçlarında filmlerin TV kategorisinde çıkmasını engelle
         let filteredItems = items.filter(item => {
-            if (type === "tv") return item._origin === 'tv' || item.type === 'channel';
-            if (type === "movie") return item._origin === 'movie';
-            if (type === "series") return item._origin === 'series';
+            // API'den gelen ham 'type' bilgisini kontrol et
+            const apiType = item.type; 
+            
+            if (id === "rc_live" || type === "tv") {
+                return (apiType === "channel" || apiType === "m3u8" || item._origin === 'tv');
+            }
+            if (type === "movie") {
+                return (apiType === "movie" || item._origin === 'movie');
+            }
+            if (type === "series") {
+                return (apiType === "serie" || item._origin === 'series');
+            }
             return true;
         });
 
         return { 
             metas: filteredItems.map(item => {
-                let actualType = type;
-                if (item._origin === 'tv' || item.type === 'channel') actualType = "tv";
-                else if (item._origin === 'series' || item.is_series === 1) actualType = "series";
-                else actualType = "movie";
+                let actualType;
+                
+                // KESİN TİP BELİRLEME (JSON'daki 'type' alanına göre)
+                if (item.type === "movie") {
+                    actualType = "movie";
+                } else if (item.type === "serie" || item.is_series === 1 || item._origin === 'series') {
+                    actualType = "series";
+                } else if (item.type === "channel" || item.type === "m3u8" || item._origin === 'tv') {
+                    actualType = "tv";
+                } else {
+                    actualType = type; // Fallback
+                }
 
                 return { 
                     id: (actualType === "tv") ? `CH_${item.id}` : `rectv_${actualType}_${item.id}`, 
@@ -136,7 +143,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     }
 });
 
-// --- 2. META VERİ İŞLEYİCİ ---
+// --- 2. META VERİ İŞLEYİCİ (Meta Handler) ---
 
 builder.defineMetaHandler(async ({ type, id }) => {
     const cleanId = getCleanId(id);
@@ -145,7 +152,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
     try {
         let url;
-        if (id.startsWith('CH_') || type === 'tv') {
+        if (id.startsWith('CH_')) {
             url = `${BASE_URL}/api/channel/by/${cleanId}/${SW_KEY}/`;
         } else if (type === 'movie') {
             url = `${BASE_URL}/api/movie/by/${cleanId}/${SW_KEY}/`;
@@ -215,7 +222,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
     }
 });
 
-// --- 3. YAYIN İŞLEYİCİ ---
+// --- 3. YAYIN İŞLEYİCİ (Stream Handler) ---
 
 builder.defineStreamHandler(async ({ id }) => {
     const parts = id.split(':');
