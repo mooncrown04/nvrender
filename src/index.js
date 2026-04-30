@@ -23,7 +23,7 @@ const manifest = {
     id: "com.mooncrown.rectv.v23",
     version: "8.9.0",
     name: "RECTV Ultimate Fix",
-    description: "Canlı TV Arama & Kesin Tip Ayrımı (Fix)",
+    description: "Canlı TV Arama & Kesin Tip Ayrımı (moon)",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
     idPrefixes: ["rectv_", "tt", "CH_", "tmdb:"],
