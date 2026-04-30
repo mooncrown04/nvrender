@@ -180,7 +180,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
                     logo:item.image,
 					description: (item.categories && item.categories.length > 0) 
                     ? `Kategori: ${item.categories.map(c => c.title).join(', ')}` 
-                    : (extra.genre || "Genel")
+                    : (extra.genre || "Genel"),
                     posterShape: (actualType === "tv") ? "landscape" : "poster" 
                 };
             }) 
