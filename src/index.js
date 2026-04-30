@@ -89,7 +89,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
         let url;
         // Canlı TV kanallarını çekmek için özel endpoint
         if (type === "tv") {
-            url = `${BASE_URL}/api/channel/by/category/0/${SW_KEY}/`;
+            url = `${BASE_URL}/api/channel/by/filtres/0/${SW_KEY}/`;
         } else {
             // Arama yapılıyorsa arama API'sini, yapılmıyorsa filtreli içerik API'sini kullan
             url = extra?.search 
