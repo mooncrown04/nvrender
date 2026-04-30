@@ -19,11 +19,12 @@ const PLAYER_HEADERS = {
     'Accept-Encoding': 'identity'
 };
 
+// --- ADDON MANİFESTOSU ---
 const manifest = {
     id: "com.mooncrown.rectv.v23",
     version: "8.0.0",
     name: "RECTV Fix Final",
-    description: "Canlı TV Katalog & TMDB/CH_ ID Fix",
+    description: "Canlı TV Katalog & moon",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
     idPrefixes: ["rectv_", "tt", "CH_", "tmdb:"],
@@ -31,7 +32,8 @@ const manifest = {
         { 
             id: "rc_live", 
             type: "tv", 
-            name: "RECTV Canlı TV" 
+            name: "RECTV Canlı TV",
+            extra: [{ name: "search" }] // CANLI TV İÇİN ARAMA KUTUSU EKLENDİ
         },
         { id: "rc_movie", type: "movie", name: "RECTV Filmler", extra: [{ name: "search" }, { name: "skip" }] },
         { id: "rc_series", type: "series", name: "RECTV Diziler", extra: [{ name: "search" }, { name: "skip" }] }
@@ -68,48 +70,55 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
         const authHeaders = { ...HEADERS, 'Authorization': `Bearer ${token}` };
         
         let url;
-        // 1. Durum: Canlı TV Kataloğu
+        // URL Belirleme Mantığı
         if (id === "rc_live") {
-            url = `${BASE_URL}/api/channel/by/filtres/6/0/0/${SW_KEY}/`;
-        } 
-        // 2. Durum: Arama Yapılıyorsa (Tip kısıtlaması olmadan genel arama)
-        else if (extra?.search) {
+            if (extra?.search) {
+                // TV sekmesinde arama yapılıyorsa genel arama API'si
+                url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
+            } else {
+                url = `${BASE_URL}/api/channel/by/filtres/6/0/0/${SW_KEY}/`;
+            }
+        } else if (extra?.search) {
             url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
-        } 
-        // 3. Durum: Normal Film/Dizi Kataloğu
-        else {
+        } else {
             url = `${BASE_URL}/api/${type === 'movie' ? 'movie' : 'serie'}/by/filtres/0/created/${extra?.skip || 0}/${SW_KEY}/`;
         }
         
         const res = await fetch(url, { headers: authHeaders });
         const data = await res.json();
         
-        // Arama sonuçlarında hem posters hem series gelebileceği için listeleri birleştiriyoruz
-        const items = [
-            ...(data.channels || []),
-            ...(data.posters || []),
-            ...(data.series || []),
-            ...(Array.isArray(data) ? data : [])
-        ];
+        // KESİN AYRIM İÇİN ORIGIN ETİKETLEME SİSTEMİ
+        const items = [];
+        if (data.channels) data.channels.forEach(i => items.push({ ...i, _origin: 'tv' }));
+        if (data.posters) data.posters.forEach(i => items.push({ ...i, _origin: 'movie' }));
+        if (data.series) data.series.forEach(i => items.push({ ...i, _origin: 'series' }));
         
-        return { 
-            metas: items.map(item => {
-                // Dinamik Tip Belirleme: Arama sonuçlarında her öğenin tipini kendi verisinden anla
-                let actualType = type; 
+        // Arama dışı durumlarda direkt array gelirse
+        if (items.length === 0 && Array.isArray(data)) {
+            data.forEach(i => items.push({ ...i, _origin: type }));
+        }
 
-                if (extra?.search) {
-                    if (item.is_series === 1 || item.type === 'serie' || item.seasons) {
-                        actualType = "series";
-                    } else if (item.type === 'channel' || item.image && !item.backdrop) {
-                        // Eğer kanal listesinden geliyorsa veya belirli kanal özellikleri varsa
-                        if (data.channels || item.type === 'channel') actualType = "tv";
-                        else actualType = "movie";
-                    } else {
-                        actualType = "movie";
-                    }
+        // TV sekmesindeysek sadece kanalları filtrele
+        let filteredItems = items;
+        if (id === "rc_live" && extra?.search) {
+            filteredItems = items.filter(item => item._origin === 'tv' || item.type === 'channel');
+        }
+
+        return { 
+            metas: filteredItems.map(item => {
+                let actualType;
+                
+                // Tip Belirleme Hiyerarşisi
+                if (item._origin === 'tv' || item.type === 'channel') {
+                    actualType = "tv";
+                } else if (item._origin === 'series' || item.is_series === 1 || item.type === 'serie' || item.seasons) {
+                    actualType = "series";
+                } else {
+                    actualType = "movie";
                 }
 
                 return { 
+                    // ID prefixi kesin olarak tipine göre atanır
                     id: (actualType === "tv") ? `CH_${item.id}` : `rectv_${actualType}_${item.id}`, 
                     type: actualType, 
                     name: item.title || item.name, 
