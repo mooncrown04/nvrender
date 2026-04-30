@@ -31,10 +31,10 @@ const manifest = {
     id: "com.mooncrown.rectv.v23",
     version: "8.0.0",
     name: "RECTV Fix Final",
-    description: "Canlı TV Katalog & TMDB/CH_ ID Fix",
+    description: "Canlı TV Katalog & TMDB/CH_ ID Fix-moon",
     resources: ["catalog", "meta", "stream"],
     // Desteklenen içerik türleri
-    types: ["movie", "series", "tv", "channel"],
+    types: ["movie", "series", "tv"],
     // Eklentinin hangi ID yapılarını tanıyacağı
     idPrefixes: ["rectv_", "tt", "CH_", "tmdb:"],
     // Arayüzde görünecek olan ana kategoriler
@@ -88,8 +88,8 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
         
         let url;
         // Canlı TV kanallarını çekmek için özel endpoint
-        if (id === "rc_live" || type === "tv") {
-            url = `${BASE_URL}/api/channel/by/category/1/${SW_KEY}/`;
+        if (type === "tv") {
+            url = `${BASE_URL}/api/channel/by/category/0/${SW_KEY}/`;
         } else {
             // Arama yapılıyorsa arama API'sini, yapılmıyorsa filtreli içerik API'sini kullan
             url = extra?.search 
@@ -106,7 +106,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
         return { 
             metas: items.map(item => ({ 
                 // ID Belirleme: TV ise 'CH_' prefixi kullanılır
-                id: (id === "rc_live" || type === "tv") ? `CH_${item.id}` : `rectv_${type}_${item.id}`, 
+                id: (type === "tv") ? `CH_${item.id}` : `rectv_${type}_${item.id}`, 
                 type: type, 
                 name: item.title || item.name, 
                 poster: item.image || item.thumbnail,
@@ -129,7 +129,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
         if (id.startsWith('CH_')) {
             url = `${BASE_URL}/api/channel/${cleanId}/${SW_KEY}/`;
         } else if (type === 'movie') {
-            url = `${BASE_URL}/api/movie/${cleanId}/${SW_KEY}/`;
+            url = `${BASE_URL}/api/movie/by/${cleanId}/${SW_KEY}/`;
         } else {
             url = `${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`;
         }
@@ -217,7 +217,7 @@ builder.defineStreamHandler(async ({ id }) => {
             const data = await res.json();
             sources = data.sources || (data.url ? [{ url: data.url }] : []);
         } else if (!id.includes(':')) {
-            const res = await fetch(`${BASE_URL}/api/movie/${cleanId}/${SW_KEY}/`, { headers });
+            const res = await fetch(`${BASE_URL}/api/movie/by/${cleanId}/${SW_KEY}/`, { headers });
             const data = await res.json();
             sources = data.sources || [];
         } else {
@@ -233,7 +233,7 @@ builder.defineStreamHandler(async ({ id }) => {
         return {
             streams: sources.map(src => ({
                 name: "RECTV",
-                title: id.startsWith('CH_') ? "CANLI YAYIN" : "HD",
+                title: id.startsWith('CH_') ? "CANLI YAYIN" : "AHD",
                 url: src.url,
                 // Proxy ve Player ayarları
                 behaviorHints: { 
