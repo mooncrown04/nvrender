@@ -19,16 +19,22 @@ const PLAYER_HEADERS = {
     'Accept-Encoding': 'identity'
 };
 
+// --- ADDON MANİFESTOSU ---
 const manifest = {
     id: "com.mooncrown.rectv.v23",
-    version: "8.9.0",
+    version: "8.5.0",
     name: "RECTV Ultimate Fix",
-    description: "Canlı TV Arama & Kesin Tip Ayrımı (moon)",
+    description: "Canlı TV Arama & Kesin Tip Ayrımı (Fix)",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
     idPrefixes: ["rectv_", "tt", "CH_", "tmdb:"],
     catalogs: [
-        { id: "rc_live", type: "tv", name: "RECTV Canlı TV", extra: [{ name: "search" }] },
+        { 
+            id: "rc_live", 
+            type: "tv", 
+            name: "RECTV Canlı TV",
+            extra: [{ name: "search" }] // TV sekmesine arama kutusu eklendi
+        },
         { id: "rc_movie", type: "movie", name: "RECTV Filmler", extra: [{ name: "search" }, { name: "skip" }] },
         { id: "rc_series", type: "series", name: "RECTV Diziler", extra: [{ name: "search" }, { name: "skip" }] }
     ]
@@ -48,10 +54,15 @@ async function getAuthToken() {
 
 function getCleanId(id) {
     if (!id) return "";
-    return id.split(':').shift().replace('rectv_movie_', '').replace('rectv_series_', '').replace('tmdb:', '').replace('tt', '').split('_').pop();
+    return id.split(':').shift()
+             .replace('rectv_movie_', '')
+             .replace('rectv_series_', '')
+             .replace('tmdb:', '')
+             .replace('tt', '')
+             .split('_').pop();
 }
 
-// --- 1. KATALOG İŞLEYİCİ (Orijinal Yapıya Dönüldü) ---
+// --- 1. KATALOG İŞLEYİCİ (Catalog Handler) ---
 
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
     try {
@@ -59,8 +70,13 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
         const authHeaders = { ...HEADERS, 'Authorization': `Bearer ${token}` };
         
         let url;
+        // URL Belirleme Mantığı
         if (id === "rc_live" || type === "tv") {
-            url = extra?.search ? `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/` : `${BASE_URL}/api/channel/by/filtres/6/0/0/${SW_KEY}/`;
+            if (extra?.search) {
+                url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
+            } else {
+                url = `${BASE_URL}/api/channel/by/filtres/6/0/0/${SW_KEY}/`;
+            }
         } else if (extra?.search) {
             url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
         } else {
@@ -70,6 +86,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
         const res = await fetch(url, { headers: authHeaders });
         const data = await res.json();
         
+        // Verileri bir havuzda topla ve _origin etiketi ekle
         const items = [];
         if (data.channels) data.channels.forEach(i => items.push({ ...i, _origin: 'tv' }));
         if (data.posters) data.posters.forEach(i => items.push({ ...i, _origin: 'movie' }));
@@ -79,23 +96,37 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
             data.forEach(i => items.push({ ...i, _origin: type }));
         }
 
-        // --- KRİTİK FİLTRE: Sadece Arama Sırasında Karışıklığı Önler ---
+        // Filtreleme: Arama sonuçlarında filmlerin TV kategorisinde çıkmasını engelle
         let filteredItems = items.filter(item => {
-            if (!extra?.search) return true; // Arama yoksa her şeyi olduğu gibi göster
-
-            if (type === "movie") return (item.type === "movie" || item._origin === 'movie');
-            if (type === "series") return (item.type === "serie" || item.is_series === 1 || item._origin === 'series');
-            if (type === "tv") return (item.type === "channel" || item.type === "m3u8" || item._origin === 'tv');
+            // API'den gelen ham 'type' bilgisini kontrol et
+            const apiType = item.type; 
+            
+            if (id === "rc_live" || type === "tv") {
+                return (apiType === "channel" || apiType === "m3u8" || item._origin === 'tv');
+            }
+            if (type === "movie") {
+                return (apiType === "movie" || item._origin === 'movie')&& item.is_series !== 1;
+            }
+            if (type === "series") {
+                return (apiType === "serie" || item._origin === 'series');
+            }
             return true;
         });
 
         return { 
             metas: filteredItems.map(item => {
                 let actualType;
-                if (item.type === "movie") actualType = "movie";
-                else if (item.type === "serie" || item.is_series === 1 || item._origin === 'series') actualType = "series";
-                else if (item.type === "channel" || item.type === "m3u8" || item._origin === 'tv') actualType = "tv";
-                else actualType = type;
+                
+                // KESİN TİP BELİRLEME (JSON'daki 'type' alanına göre)
+                if (item.type === "movie") {
+                    actualType = "movie";
+                } else if (item.type === "serie" || item.is_series === 1 || item._origin === 'series') {
+                    actualType = "series";
+                } else if (item.type === "channel" || item.type === "m3u8" || item._origin === 'tv') {
+                    actualType = "tv";
+                } else {
+                    actualType = type; // Fallback
+                }
 
                 return { 
                     id: (actualType === "tv") ? `CH_${item.id}` : `rectv_${actualType}_${item.id}`, 
@@ -106,15 +137,19 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
                 };
             }) 
         };
-    } catch (e) { return { metas: [] }; }
+    } catch (e) { 
+        console.error("Katalog Hatası:", e);
+        return { metas: [] }; 
+    }
 });
 
-// --- 2. META VERİ İŞLEYİCİ ---
+// --- 2. META VERİ İŞLEYİCİ (Meta Handler) ---
 
 builder.defineMetaHandler(async ({ type, id }) => {
     const cleanId = getCleanId(id);
     const token = await getAuthToken();
     const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
+
     try {
         let url;
         if (id.startsWith('CH_')) {
@@ -124,15 +159,36 @@ builder.defineMetaHandler(async ({ type, id }) => {
         } else {
             url = `${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`;
         }
+
         const res = await fetch(url, { headers });
         const data = await res.json();
 
         if (id.startsWith('CH_') || type === 'tv') {
-            return { meta: { id, type: 'tv', name: data.name || data.title, poster: data.thumbnail || data.image, background: data.image || data.thumbnail, description: data.description, posterShape: "landscape" } };
+            return {
+                meta: {
+                    id: id,
+                    type: 'tv',
+                    name: data.name || data.title || "Canlı Kanal",
+                    poster: data.thumbnail || data.image,
+                    background: data.image || data.thumbnail,
+                    description: data.description || "Kesintisiz Canlı Yayın",
+                    posterShape: "landscape"
+                }
+            };
         }
 
         if (type === 'movie') {
-            return { meta: { id, type: 'movie', name: data.title || data.name, poster: data.image || data.thumbnail, background: data.backdrop || data.image, description: data.description, releaseInfo: data.year || "" } };
+            return {
+                meta: {
+                    id: id,
+                    type: 'movie',
+                    name: data.title || data.name || "Film",
+                    poster: data.image || data.thumbnail,
+                    background: data.backdrop || data.image,
+                    description: data.description || "Film detayı yükleniyor...",
+                    releaseInfo: data.year || ""
+                }
+            };
         }
 
         const videos = [];
@@ -141,21 +197,39 @@ builder.defineMetaHandler(async ({ type, id }) => {
                 const sNum = parseInt(s.title.match(/\d+/) || 1);
                 s.episodes.forEach(ep => {
                     const eNum = parseInt(ep.title.match(/\d+/) || 1);
-                    videos.push({ id: `${id}:${sNum}:${eNum}`, title: ep.title, season: sNum, episode: eNum });
+                    videos.push({
+                        id: `${id}:${sNum}:${eNum}`,
+                        title: ep.title,
+                        season: sNum,
+                        episode: eNum
+                    });
                 });
             });
         }
-        return { meta: { id, type: 'series', name: (Array.isArray(data) && data[0]) ? "Dizi İçeriği" : "Dizi", videos: videos } };
-    } catch (e) { return { meta: {} }; }
+        
+        return { 
+            meta: { 
+                id: id, 
+                type: 'series', 
+                name: (Array.isArray(data) && data[0]) ? "Dizi İçeriği" : "Dizi", 
+                videos: videos 
+            } 
+        };
+
+    } catch (e) { 
+        console.error("Meta Error:", e);
+        return { meta: {} }; 
+    }
 });
 
-// --- 3. YAYIN İŞLEYİCİ ---
+// --- 3. YAYIN İŞLEYİCİ (Stream Handler) ---
 
 builder.defineStreamHandler(async ({ id }) => {
     const parts = id.split(':');
     const cleanId = getCleanId(parts[0]);
     const token = await getAuthToken();
     const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
+
     try {
         let sources = [];
         if (id.startsWith('CH_')) {
@@ -173,7 +247,18 @@ builder.defineStreamHandler(async ({ id }) => {
             const episode = season?.episodes.find(e => (e.title.match(/\d+/) || [])[0] == parts[2]);
             sources = episode?.sources || [];
         }
-        return { streams: sources.map(src => ({ name: "RECTV", title: id.startsWith('CH_') ? "CANLI YAYIN" : "AHD", url: src.url, behaviorHints: { notWebReady: true, proxyHeaders: { "request": PLAYER_HEADERS } } })) };
+
+        return {
+            streams: sources.map(src => ({
+                name: "RECTV",
+                title: id.startsWith('CH_') ? "CANLI YAYIN" : "AHD",
+                url: src.url,
+                behaviorHints: { 
+                    notWebReady: true, 
+                    proxyHeaders: { "request": PLAYER_HEADERS } 
+                }
+            }))
+        };
     } catch (e) { return { streams: [] }; }
 });
 
