@@ -2,21 +2,6 @@ import pkg from 'stremio-addon-sdk';
 const { addonBuilder, serveHTTP } = pkg;
 import fetch from 'node-fetch';
 
-// --- SABİT VERİLER ---
-const MOVIE_MAP = {"Aksiyon": "1","Aile": "14","Animasyon": "13","Belgesel": "19","Bilim Kurgu": "4","Bilim-Kurgu": "28","Dram": "2","Fantastik": "10",
-  "Gerilim": "9","Gizem": "15","Komedi": "3","Korku": "8","Macera": "17","Polisiye - Suç": "7","Romantik": "5","Savaş": "32","Seri Filmler": "43","Suç": "22",
-  "Şarj Bitiren İçerikler": "42","Tarih": "21","Tarihi ve Savaş": "12","TV film": "29","Türkçe Altyazı": "27","Türkçe Dublaj": "26","Vahşi Batı": "35","Yerli Dizi / Film": "23"};
-
-const SERIES_MAP = {"ABC": "59","Aksiyon": "1","Aksiyon & Macera": "31","Adult Swim": "49","Aile": "14","Animasyon": "13","Apple TV+": "51","BBC One": "54",
-  "Belgesel": "19","bilibili": "74","Bilim Kurgu": "4","Bilim-Kurgu": "28","Bilim Kurgu & Fantazi": "30","Cartoon Network": "68","CBS": "52","Cinemax": "56",
-  "Çocuklar": "34","Disney+": "67","Disney Channel": "65","Dram": "2","Fantastik": "10","FOX": "53","Fuji TV": "72","Gerçeklik": "36","Gerilim": "9",
-  "Gizem": "15","Hallmark Channel": "50","HBO": "62","HBO Brasil": "66","Komedi": "3","Korku": "8","Macera": "17","NBC": "55","Netflix": "57",
-  "NHK Educational TV": "60","NIPPON TV": "63","Pembe Dizi": "37","Polisiye - Suç": "7","Romantik": "5","Savaş": "32","Savaş & Politik": "33","Showtime": "58",
-  "Suç": "22","Syfy": "61","Şarj Bitiren İçerikler": "42","Talk": "39","Tarih": "21","Tarihi ve Savaş": "12","TSC": "69","TV Tokyo": "71","Vahşi Batı": "35","Western": "25","Yerli Dizi / Film": "23"};  
-
-const TV_MAP = { "Spor": "1", "Belgesel": "2", "Ulusal": "3", "Haber": "4", "Sinema": "6" };
-
-// --- YAPILANDIRMA AYARLARI ---
 const PORT = process.env.PORT || 7010;
 const BASE_URL = "https://a.prectv70.lol";
 const SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
@@ -27,14 +12,145 @@ const HEADERS = {
     'Accept': 'application/json'
 };
 
-const PLAYER_HEADERS = {
-    'User-Agent': 'googleusercontent',
-    'Referer': 'https://twitter.com/',
-    'Accept-Encoding': 'identity'
+const manifest = {
+    id: "com.mooncrown.rectv.v23",
+    version: "8.8.0",
+    name: "RECTV Ultimate Fix",
+    description: "Dizi ve Film Arşivi",
+    resources: ["catalog", "meta", "stream"],
+    types: ["movie", "series", "tv"],
+    idPrefixes: ["rectv_", "CH_"],
+    catalogs: [
+        { id: "rc_live", type: "tv", name: "RECTV TV", extra: [{ name: "search" }, { name: "genre", options: ["Spor", "Belgesel", "Ulusal", "Haber", "Sinema"] }] },
+        { id: "rc_movie", type: "movie", name: "RECTV Filmler", extra: [{ name: "search" }, { name: "skip" }] },
+        { id: "rc_series", type: "series", name: "RECTV Diziler", extra: [{ name: "search" }, { name: "skip" }] }
+    ]
 };
 
-// --- ADDON MANİFESTOSU ---
-const manifest = {
+const builder = new addonBuilder(manifest);
+
+async function getAuthToken() {
+    try {
+        const res = await fetch(`${BASE_URL}/api/attest/nonce`, { headers: HEADERS });
+        const json = await res.json();
+        return json.accessToken || (await res.text()).trim();
+    } catch (e) { return null; }
+}
+
+// --- 1. KATALOG (ANA EKRAN) İŞLEYİCİ ---
+builder.defineCatalogHandler(async ({ type, id, extra }) => {
+    try {
+        const token = await getAuthToken();
+        const authHeaders = { ...HEADERS, 'Authorization': `Bearer ${token}` };
+        let url;
+        
+        if (extra?.search) {
+            url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
+        } else {
+            let rectvType = (type === 'series') ? 'serie' : (type === 'movie' ? 'movie' : 'channel');
+            url = `${BASE_URL}/api/${rectvType}/by/filtres/0/created/${extra?.skip || 0}/${SW_KEY}/`;
+        }
+
+        const res = await fetch(url, { headers: authHeaders });
+        const data = await res.json();
+        const raw = data.channels || data.posters || data.series || (Array.isArray(data) ? data : []);
+
+        return { 
+            metas: raw.map(item => ({
+                id: (type === 'tv' || item.type === 'channel') ? `CH_${item.id}` : `rectv_${type}_${item.id}`,
+                type: type,
+                name: item.title,
+                poster: item.image,
+                background: item.cover || item.image,
+                // KATALOGDA GÖRÜNEN AÇIKLAMA BURASI:
+                description: item.description || item.resume || "", 
+                releaseInfo: item.year ? item.year.toString() : (item.label || "")
+            })) 
+        };
+    } catch (e) { return { metas: [] }; }
+});
+
+// --- 2. META (DETAY SAYFASI) ---
+builder.defineMetaHandler(async ({ type, id }) => {
+    const cleanId = id.split('_').pop();
+    const token = await getAuthToken();
+    const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
+
+    try {
+        let detailUrl = type === 'movie' ? `${BASE_URL}/api/movie/by/${cleanId}/${SW_KEY}/` : `${BASE_URL}/api/serie/by/${cleanId}/${SW_KEY}/`;
+        if (id.startsWith('CH_')) detailUrl = `${BASE_URL}/api/channel/by/${cleanId}/${SW_KEY}/`;
+
+        const res = await fetch(detailUrl, { headers });
+        const data = await res.json();
+
+        const meta = {
+            id: id,
+            type: type,
+            name: data.title,
+            poster: data.image,
+            background: data.cover || data.image,
+            description: data.description || data.resume || "",
+            releaseInfo: data.year?.toString()
+        };
+
+        if (type === 'series') {
+            const sRes = await fetch(`${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`, { headers });
+            const seasons = await sRes.json();
+            meta.videos = [];
+            if (Array.isArray(seasons)) {
+                seasons.forEach(s => {
+                    const sNum = parseInt((s.title?.match(/\d+/) || [1])[0]);
+                    if (s.episodes) {
+                        s.episodes.forEach(ep => {
+                            meta.videos.push({
+                                id: `${id}:${sNum}:${parseInt((ep.title?.match(/\d+/) || [1])[0])}`,
+                                title: ep.title,
+                                season: sNum,
+                                episode: parseInt((ep.title?.match(/\d+/) || [1])[0]),
+                                description: ep.description || meta.description
+                            });
+                        });
+                    }
+                });
+            }
+        }
+        return { meta };
+    } catch (e) { return { meta: {} }; }
+});
+
+// --- 3. STREAM ---
+builder.defineStreamHandler(async ({ id }) => {
+    const parts = id.split(':');
+    const cleanId = parts[0].split('_').pop();
+    const token = await getAuthToken();
+    const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
+
+    try {
+        let sources = [];
+        if (id.startsWith('CH_')) {
+            const d = await (await fetch(`${BASE_URL}/api/channel/by/${cleanId}/${SW_KEY}/`, { headers })).json();
+            sources = d.sources || [{ url: d.url }];
+        } else if (parts.length === 1) {
+            const d = await (await fetch(`${BASE_URL}/api/movie/by/${cleanId}/${SW_KEY}/`, { headers })).json();
+            sources = d.sources || [];
+        } else {
+            const d = await (await fetch(`${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`, { headers })).json();
+            const s = d.find(x => (x.title?.match(/\d+/) || [])[0] == parts[1]);
+            const e = s?.episodes.find(x => (x.title?.match(/\d+/) || [])[0] == parts[2]);
+            sources = e?.sources || [];
+        }
+        return {
+            streams: sources.map(src => ({
+                name: "RECTV",
+                title: src.title || "HD",
+                url: src.url,
+                behaviorHints: { notWebReady: true, proxyHeaders: { "request": { "User-Agent": "googleusercontent", "Referer": "https://twitter.com/" } } }
+            }))
+        };
+    } catch (e) { return { streams: [] }; }
+});
+
+serveHTTP(builder.getInterface(), { port: PORT });const manifest = {
     id: "com.mooncrown.rectv.v23",
     version: "8.5.2",
     name: "RECTV Ultimate Fix",
