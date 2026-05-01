@@ -39,7 +39,7 @@ const PLAYER_HEADERS = {
 const manifest = {
     id: "com.mooncrown.rectv.v23",
     version: "8.5.0",
-    name: "RECTV Ultimate Fix",
+    name: "RECTV Ultimate Fix1",
     description: "dizi-film",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
