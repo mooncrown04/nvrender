@@ -16,6 +16,8 @@ const SERIES_MAP = {"ABC": "59","Aksiyon": "1","Aksiyon & Macera": "31","Adult S
 
 const TV_MAP = { "Spor": "1", "Belgesel": "2", "Ulusal": "3", "Haber": "4", "Sinema": "6" };
 
+const YEARS = Array.from({ length: 30 }, (_, i) => (2026 - i).toString());
+
 // --- YAPILANDIRMA AYARLARI ---
 const PORT = process.env.PORT || 7010;
 const BASE_URL = "https://a.prectv70.lol";
@@ -36,22 +38,49 @@ const PLAYER_HEADERS = {
 // --- ADDON MANİFESTOSU ---
 const manifest = {
     id: "com.mooncrown.rectv.v23",
-    version: "8.5.1",
+    version: "8.5.0",
     name: "RECTV Ultimate Fix",
-    description: "dizi-film41",
+    description: "dizi-film",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
     idPrefixes: ["rectv_", "tt", "CH_", "tmdb:"],
     catalogs: [
-        { id: "rc_live", type: "tv", name: "RECTV Canlı TV", extra: [{ name: "search" }, { name: "genre", options: Object.keys(TV_MAP) }] },
-        { id: "rc_movie", type: "movie", name: "RECTV Filmler", extra: [{ name: "search" }, { name: "skip" }, { name: "genre", options: Object.keys(MOVIE_MAP) }] },
-        { id: "rc_series", type: "series", name: "RECTV Diziler", extra: [{ name: "search" }, { name: "skip" }, { name: "genre", options: Object.keys(SERIES_MAP) }] }
+        { 
+            id: "rc_live", 
+            type: "tv", 
+            name: "RECTV Canlı TV",
+            extra: [
+                { name: "search" },
+                { name: "genre", options: Object.keys(TV_MAP) }
+            ]
+        },
+        { 
+            id: "rc_movie", 
+            type: "movie", 
+            name: "RECTV Filmler", 
+            extra: [
+                { name: "search" }, 
+                { name: "skip" },
+                { name: "genre", options: Object.keys(MOVIE_MAP) }
+            ] 
+        },
+        { 
+            id: "rc_series", 
+            type: "series", 
+            name: "RECTV Diziler", 
+            extra: [
+                { name: "search" }, 
+                { name: "skip" },
+                { name: "genre", options: Object.keys(SERIES_MAP) }
+            ] 
+        }
     ]
 };
 
 const builder = new addonBuilder(manifest);
 
 // --- YARDIMCI FONKSİYONLAR ---
+
 async function getAuthToken() {
     try {
         const res = await fetch(`${BASE_URL}/api/attest/nonce`, { headers: HEADERS });
@@ -70,48 +99,102 @@ function getCleanId(id) {
              .split('_').pop();
 }
 
-// --- 1. KATALOG İŞLEYİCİ ---
+// --- 1. KATALOG İŞLEYİCİ (Catalog Handler) ---
+
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
     try {
         const token = await getAuthToken();
         const authHeaders = { ...HEADERS, 'Authorization': `Bearer ${token}` };
+        
         let url;
         
         if (id === "rc_live" || type === "tv") {
-            if (extra?.search) url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
-            else if (extra?.genre) url = `${BASE_URL}/api/channel/by/filtres/${TV_MAP[extra.genre] || "6"}/0/0/${SW_KEY}/`;
-            else url = `${BASE_URL}/api/channel/by/filtres/6/0/0/${SW_KEY}/`;
-        } else if (extra?.search) {
+            if (extra?.search) {
+                url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
+            } else if (extra?.genre) {
+                const genreId = TV_MAP[extra.genre] || "6";
+                url = `${BASE_URL}/api/channel/by/filtres/${genreId}/0/0/${SW_KEY}/`;
+            } else {
+                url = `${BASE_URL}/api/channel/by/filtres/6/0/0/${SW_KEY}/`;
+            }
+        } 
+        else if (extra?.search) {
             url = `${BASE_URL}/api/search/${encodeURIComponent(extra.search)}/${SW_KEY}/`;
         } else {
             let rectvType = (type === 'series') ? 'serie' : 'movie';
-            let genreId = type === 'movie' ? (MOVIE_MAP[extra?.genre] || "0") : (SERIES_MAP[extra?.genre] || "0");
+            let genreId = "0";
+            
+            if (extra?.genre) {
+                if (type === 'movie') genreId = MOVIE_MAP[extra.genre] || "0";
+                else if (type === 'series') genreId = SERIES_MAP[extra.genre] || "0";
+            }
+
             url = `${BASE_URL}/api/${rectvType}/by/filtres/${genreId}/created/${extra?.skip || 0}/${SW_KEY}/`;
         }
         
         const res = await fetch(url, { headers: authHeaders });
         const data = await res.json();
+        
         const items = [];
         if (data.channels) data.channels.forEach(i => items.push({ ...i, _origin: 'tv' }));
         if (data.posters) data.posters.forEach(i => items.push({ ...i, _origin: 'movie' }));
         if (data.series) data.series.forEach(i => items.push({ ...i, _origin: 'series' }));
-        if (items.length === 0 && Array.isArray(data)) data.forEach(i => items.push({ ...i, _origin: type }));
+        
+        if (items.length === 0 && Array.isArray(data)) {
+            data.forEach(i => items.push({ ...i, _origin: type }));
+        }
+
+        let filteredItems = items.filter(item => {
+            const apiType = item.type; 
+            if (id === "rc_live" || type === "tv") {
+                return (apiType === "channel" || apiType === "m3u8" || item._origin === 'tv');
+            }
+            if (type === "movie") {
+                return (apiType === "movie" || item._origin === 'movie') && item.is_series !== 1;
+            }
+            if (type === "series") {
+                return (apiType === "serie" || item._origin === 'series');
+            }
+            return true;
+        });
 
         return { 
-            metas: items.map(item => ({
-                id: (item.type === "channel" || item._origin === 'tv') ? `CH_${item.id}` : `rectv_${type}_${item.id}`,
-                type: (item.type === "channel" || item._origin === 'tv') ? "tv" : type,
-                name: item.title,
-                poster: item.image,
-                background: item.image,
-                description: item.description || item.resume || "",
-                posterShape: (item.type === "channel" || item._origin === 'tv') ? "landscape" : "poster"
-            })) 
+            metas: filteredItems.map(item => {
+                let actualType;
+                if (item.type === "movie") {
+                    actualType = "movie";
+                } else if (item.type === "serie" || item.is_series === 1 || item._origin === 'series') {
+                    actualType = "series";
+                } else if (item.type === "channel" || item.type === "m3u8" || item._origin === 'tv') {
+                    actualType = "tv";
+                } else {
+                    actualType = type;
+                }
+
+                return { 
+                    id: (actualType === "tv") ? `CH_${item.id}` : `rectv_${actualType}_${item.id}`, 
+                    type: actualType, 
+                    name: item.title, 
+                    poster: item.image,
+					background:  item.image,                  
+                   // logo:item.image,
+					description: (item.categories && item.categories.length > 0) 
+                    ? `Kategori: ${item.categories.map(c => c.title).join(', ')}` 
+                    : (extra.genre || "Genel"),
+                    posterShape: (actualType === "tv") ? "landscape" : "poster" 
+                };
+            }) 
         };
-    } catch (e) { return { metas: [] }; }
+    } catch (e) { 
+        console.error("Katalog Hatası:", e);
+        return { metas: [] }; 
+    }
 });
 
-// --- 2. META VERİ İŞLEYİCİ ---
+// --- 2. META VERİ İŞLEYİCİ (Meta Handler) ---
+
+// --- 2. META VERİ İŞLEYİCİ (Meta Handler) - DÜZELTİLMİŞ ---
+
 builder.defineMetaHandler(async ({ type, id }) => {
     const cleanId = getCleanId(id);
     const token = await getAuthToken();
@@ -119,42 +202,74 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
     try {
         let url;
-        if (id.startsWith('CH_')) url = `${BASE_URL}/api/channel/by/${cleanId}/${SW_KEY}/`;
-        else if (type === 'movie') url = `${BASE_URL}/api/movie/by/${cleanId}/${SW_KEY}/`;
-        else url = `${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`;
+        if (id.startsWith('CH_')) {
+            url = `${BASE_URL}/api/channel/by/${cleanId}/${SW_KEY}/`;
+        } else if (type === 'movie') {
+            url = `${BASE_URL}/api/movie/by/${cleanId}/${SW_KEY}/`;
+        } else {
+            url = `${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`;
+        }
 
         const res = await fetch(url, { headers });
         const data = await res.json();
 
+        // --- CANLI TV / KANAL KISMI ---
         if (id.startsWith('CH_') || type === 'tv') {
-            return { meta: { id, type: 'tv', name: data.title, poster: data.image, description: data.description || "Kesintisiz Yayın", posterShape: "landscape" } };
+            return {
+                meta: {
+                    id: id,
+                    type: 'tv',
+                    name: data.title || "Canlı Kanal",
+                    poster: data.image,
+                   // logo: data.image,
+                    background: data.cover || data.image,
+                    description: data.description || `${data.title || ""} Kesintisiz Canlı Yayın`,
+                    posterShape: "landscape"
+                }
+            };
         }
 
+        // --- FİLM KISMI ---
         if (type === 'movie') {
-            return { meta: { id, type: 'movie', name: data.title, poster: data.image, description: data.description || "Film özeti bulunamadı.", releaseInfo: data.year?.toString() } };
+            return {
+                meta: {
+                    id: id,
+                    type: 'movie',
+                    name: data.title,
+                    poster: data.image,
+                   // logo: data.image,
+                    background: data.cover || data.image,
+                    description: data.description || "Film detayı bulunamadı.",
+                    releaseInfo: data.year ? data.year.toString() : ""
+                }
+            };
         }
 
-        // --- DİZİ DÜZENLEME (İsim ve Açıklama Buradan Gelir) ---
+        // --- DİZİ (SERIES) KISMI ---
         const videos = [];
-        const firstSeason = Array.isArray(data) ? data[0] : data;
-        
-        // Bazı API yanıtlarında serie_title/serie_description olarak gelir
-        const serieTitle = firstSeason?.serie_title || firstSeason?.title || "Dizi";
-        const serieDescription = firstSeason?.serie_description || firstSeason?.description || firstSeason?.resume || "Açıklama bulunamadı.";
+        // Veri dizi olarak geliyorsa ilk sezonu veya dizi objesini referans al
+        const mainData = Array.isArray(data) ? data[0] : data;
 
         if (Array.isArray(data)) {
             data.forEach(s => {
-                const sNum = parseInt((s.title.match(/\d+/) || [1])[0]);
-                if (s.episodes) {
+                // Sezon numarasını başlıktan veya objeden çek
+                const sMatch = s.title ? s.title.match(/\d+/) : null;
+                const sNum = sMatch ? parseInt(sMatch[0]) : (s.position || 1);
+
+                if (s.episodes && Array.isArray(s.episodes)) {
                     s.episodes.forEach(ep => {
-                        const eNum = parseInt((ep.title.match(/\d+/) || [1])[0]);
+                        const eMatch = ep.title ? ep.title.match(/\d+/) : null;
+                        const eNum = eMatch ? parseInt(eMatch[0]) : (ep.position || 1);
+
                         videos.push({
                             id: `${id}:${sNum}:${eNum}`,
                             title: ep.title || `${eNum}. Bölüm`,
-                            description: ep.description || serieDescription, // Bölüm açıklaması boşsa dizi açıklamasını bas
+                            // Bölüm özeti yoksa ana dizi özetini basar
+                            description: ep.description || mainData?.description || "Bölüm açıklaması bulunmuyor.",
+                            poster: ep.image || mainData?.image,
+                            background: ep.cover || ep.image || mainData?.cover,
                             season: sNum,
                             episode: eNum,
-                            poster: ep.image || firstSeason?.image,
                             released: new Date().toISOString()
                         });
                     });
@@ -162,22 +277,30 @@ builder.defineMetaHandler(async ({ type, id }) => {
             });
         }
 
-        return {
-            meta: {
-                id, 
-                type: 'series',
-                name: serieTitle,
-                poster: firstSeason?.image || "",
-                background: firstSeason?.cover || firstSeason?.image || "",
-                videos: videos,
-                description: serieDescription,
-                releaseInfo: firstSeason?.year?.toString() || ""
-            }
+        return { 
+            meta: { 
+                id: id, 
+                type: 'series', 
+                name: mainData?.title || "Dizi İçeriği", 
+                poster: mainData?.image || "",
+                background: mainData?.cover || mainData?.image || "",
+                logo: mainData?.logo || mainData?.image || "",
+                videos: videos, 
+                // BURASI: Stremio ana ekranındaki açıklama
+                description: mainData?.description || "Dizi açıklaması yüklenemedi.",
+                releaseInfo: mainData?.year ? mainData.year.toString() : "",
+                genres: (mainData?.genres || []).map(g => g.title || g)
+            } 
         };
-    } catch (e) { return { meta: {} }; }
+
+    } catch (e) { 
+        console.error("Meta Error:", e);
+        return { meta: {} }; 
+    }
 });
 
-// --- 3. YAYIN İŞLEYİCİ ---
+// --- 3. YAYIN İŞLEYİCİ (Stream Handler) ---
+
 builder.defineStreamHandler(async ({ id }) => {
     const parts = id.split(':');
     const cleanId = getCleanId(parts[0]);
@@ -185,32 +308,59 @@ builder.defineStreamHandler(async ({ id }) => {
     const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
 
     try {
-        let sources = [], contentTitle = "Yayın";
+        let sources = [];
+        let contentTitle = ""; // Kanal veya içerik ismini tutmak için
+
         if (id.startsWith('CH_')) {
-            const data = await (await fetch(`${BASE_URL}/api/channel/by/${cleanId}/${SW_KEY}/`, { headers })).json();
-            contentTitle = data.title;
+            const res = await fetch(`${BASE_URL}/api/channel/by/${cleanId}/${SW_KEY}/`, { headers });
+            const data = await res.json();
+            contentTitle = data.title || "Canlı TV";
             sources = data.sources || (data.url ? [{ url: data.url }] : []);
         } else if (!id.includes(':')) {
-            const data = await (await fetch(`${BASE_URL}/api/movie/by/${cleanId}/${SW_KEY}/`, { headers })).json();
-            contentTitle = data.title;
+            const res = await fetch(`${BASE_URL}/api/movie/by/${cleanId}/${SW_KEY}/`, { headers });
+            const data = await res.json();
+            contentTitle = data.title || "Film";
             sources = data.sources || [];
         } else {
-            const data = await (await fetch(`${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`, { headers })).json();
+            const res = await fetch(`${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`, { headers });
+            const data = await res.json();
             const season = data.find(s => (s.title.match(/\d+/) || [])[0] == parts[1]);
             const episode = season?.episodes.find(e => (e.title.match(/\d+/) || [])[0] == parts[2]);
-            contentTitle = episode?.title;
+            contentTitle = episode?.title || "Dizi";
             sources = episode?.sources || [];
         }
 
         return {
-            streams: sources.map(src => ({
-                name: contentTitle,
-                title: `RECTV | ${src.size || "HD"} | ${(src.title || "").toLowerCase().includes("dublaj") ? "🇹🇷" : "🌐"} ${src.title || ""}`,
-                url: src.url,
-                behaviorHints: { notWebReady: true, proxyHeaders: { "request": PLAYER_HEADERS } }
-            }))
+            streams: sources.map(src => {
+                // EMOJI VE DİL KONTROLÜ
+                let languageIcon = "";
+                const srcTitle = (src.title || "").toLowerCase();
+                
+                if (srcTitle.includes("dublaj") || srcTitle.includes("tr")) {
+                    languageIcon = "🇹🇷 "; // Türk Bayrağı
+                } else if (srcTitle.includes("altyazı") || srcTitle.includes("sub")) {
+                    languageIcon = "🌐 "; // Dünya Emojisi
+                }
+
+                return {
+                    // NAME: Burası kalın ve büyük görünür, Kanal/Film ismi gelmeli
+                    name: contentTitle, 
+                    
+                    // TITLE: Sağlayıcı ismi (RECTV) + Kalite + Dil emojisi
+                    title: `RECTV | ${src.size || "HD"} | ${languageIcon}${src.title || ""}`,
+                    
+                    url: src.url,
+                    behaviorHints: { 
+                        notWebReady: true, 
+                        proxyHeaders: { "request": PLAYER_HEADERS } 
+                    }
+                };
+            })
         };
-    } catch (e) { return { streams: [] }; }
+    } catch (e) { 
+        console.error(e);
+        return { streams: [] }; 
+    }
 });
 
 serveHTTP(builder.getInterface(), { port: PORT });
