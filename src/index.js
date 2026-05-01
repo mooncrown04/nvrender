@@ -3,10 +3,20 @@ const { addonBuilder, serveHTTP } = pkg;
 import fetch from 'node-fetch';
 
 // --- SABİT VERİLER ---
-const MOVIE_MAP = {"Aksiyon": "1","Aile": "14","Animasyon": "13","Belgesel": "19","Bilim Kurgu": "4","Bilim-Kurgu": "28","Dram": "2","Fantastik": "10","Gerilim": "9","Gizem": "15","Komedi": "3","Korku": "8","Macera": "17","Polisiye - Suç": "7","Romantik": "5","Savaş": "32","Seri Filmler": "43","Suç": "22","Şarj Bitiren İçerikler": "42","Tarih": "21","Tarihi ve Savaş": "12","TV film": "29","Türkçe Altyazı": "27","Türkçe Dublaj": "26","Vahşi Batı": "35","Yerli Dizi / Film": "23"};
-const SERIES_MAP = {"ABC": "59","Aksiyon": "1","Aksiyon & Macera": "31","Adult Swim": "49","Aile": "14","Animasyon": "13","Apple TV+": "51","BBC One": "54","Belgesel": "19","bilibili": "74","Bilim Kurgu": "4","Bilim-Kurgu": "28","Bilim Kurgu & Fantazi": "30","Cartoon Network": "68","CBS": "52","Cinemax": "56","Çocuklar": "34","Disney+": "67","Disney Channel": "65","Dram": "2","Fantastik": "10","FOX": "53","Fuji TV": "72","Gerçeklik": "36","Gerilim": "9","Gizem": "15","Hallmark Channel": "50","HBO": "62","HBO Brasil": "66","Komedi": "3","Korku": "8","Macera": "17","NBC": "55","Netflix": "57","NHK Educational TV": "60","NIPPON TV": "63","Pembe Dizi": "37","Polisiye - Suç": "7","Romantik": "5","Savaş": "32","Savaş & Politik": "33","Showtime": "58","Suç": "22","Syfy": "61","Şarj Bitiren İçerikler": "42","Talk": "39","Tarih": "21","Tarihi ve Savaş": "12","TSC": "69","TV Tokyo": "71","Vahşi Batı": "35","Western": "25","Yerli Dizi / Film": "23"};  
+const MOVIE_MAP = {"Aksiyon": "1","Aile": "14","Animasyon": "13","Belgesel": "19","Bilim Kurgu": "4","Bilim-Kurgu": "28","Dram": "2","Fantastik": "10",
+  "Gerilim": "9","Gizem": "15","Komedi": "3","Korku": "8","Macera": "17","Polisiye - Suç": "7","Romantik": "5","Savaş": "32","Seri Filmler": "43","Suç": "22",
+  "Şarj Bitiren İçerikler": "42","Tarih": "21","Tarihi ve Savaş": "12","TV film": "29","Türkçe Altyazı": "27","Türkçe Dublaj": "26","Vahşi Batı": "35","Yerli Dizi / Film": "23"};
+
+const SERIES_MAP = {"ABC": "59","Aksiyon": "1","Aksiyon & Macera": "31","Adult Swim": "49","Aile": "14","Animasyon": "13","Apple TV+": "51","BBC One": "54",
+  "Belgesel": "19","bilibili": "74","Bilim Kurgu": "4","Bilim-Kurgu": "28","Bilim Kurgu & Fantazi": "30","Cartoon Network": "68","CBS": "52","Cinemax": "56",
+  "Çocuklar": "34","Disney+": "67","Disney Channel": "65","Dram": "2","Fantastik": "10","FOX": "53","Fuji TV": "72","Gerçeklik": "36","Gerilim": "9",
+  "Gizem": "15","Hallmark Channel": "50","HBO": "62","HBO Brasil": "66","Komedi": "3","Korku": "8","Macera": "17","NBC": "55","Netflix": "57",
+  "NHK Educational TV": "60","NIPPON TV": "63","Pembe Dizi": "37","Polisiye - Suç": "7","Romantik": "5","Savaş": "32","Savaş & Politik": "33","Showtime": "58",
+  "Suç": "22","Syfy": "61","Şarj Bitiren İçerikler": "42","Talk": "39","Tarih": "21","Tarihi ve Savaş": "12","TSC": "69","TV Tokyo": "71","Vahşi Batı": "35","Western": "25","Yerli Dizi / Film": "23"};  
+
 const TV_MAP = { "Spor": "1", "Belgesel": "2", "Ulusal": "3", "Haber": "4", "Sinema": "6" };
 
+// --- YAPILANDIRMA AYARLARI ---
 const PORT = process.env.PORT || 7010;
 const BASE_URL = "https://a.prectv70.lol";
 const SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
@@ -23,11 +33,12 @@ const PLAYER_HEADERS = {
     'Accept-Encoding': 'identity'
 };
 
+// --- ADDON MANİFESTOSU ---
 const manifest = {
     id: "com.mooncrown.rectv.v23",
-    version: "9.0.0",
+    version: "8.5.1",
     name: "RECTV Ultimate Fix",
-    description: "Dizi ve Film Arşivi",
+    description: "dizi-film",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
     idPrefixes: ["rectv_", "tt", "CH_", "tmdb:"],
@@ -40,6 +51,7 @@ const manifest = {
 
 const builder = new addonBuilder(manifest);
 
+// --- YARDIMCI FONKSİYONLAR ---
 async function getAuthToken() {
     try {
         const res = await fetch(`${BASE_URL}/api/attest/nonce`, { headers: HEADERS });
@@ -50,7 +62,12 @@ async function getAuthToken() {
 
 function getCleanId(id) {
     if (!id) return "";
-    return id.split(':').shift().replace('rectv_movie_', '').replace('rectv_series_', '').replace('tmdb:', '').replace('tt', '').split('_').pop();
+    return id.split(':').shift()
+             .replace('rectv_movie_', '')
+             .replace('rectv_series_', '')
+             .replace('tmdb:', '')
+             .replace('tt', '')
+             .split('_').pop();
 }
 
 // --- 1. KATALOG İŞLEYİCİ ---
@@ -86,8 +103,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
                 type: (item.type === "channel" || item._origin === 'tv') ? "tv" : type,
                 name: item.title,
                 poster: item.image,
-                background: item.cover || item.image,
-                // KATALOGDA GÖRÜNEN AÇIKLAMA DÜZELTİLDİ:
+                background: item.image,
                 description: item.description || item.resume || "",
                 posterShape: (item.type === "channel" || item._origin === 'tv') ? "landscape" : "poster"
             })) 
@@ -95,7 +111,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     } catch (e) { return { metas: [] }; }
 });
 
-// --- 2. META İŞLEYİCİ ---
+// --- 2. META VERİ İŞLEYİCİ ---
 builder.defineMetaHandler(async ({ type, id }) => {
     const cleanId = getCleanId(id);
     const token = await getAuthToken();
@@ -111,29 +127,34 @@ builder.defineMetaHandler(async ({ type, id }) => {
         const data = await res.json();
 
         if (id.startsWith('CH_') || type === 'tv') {
-            return { meta: { id, type: 'tv', name: data.title, poster: data.image, description: data.description || "Canlı Yayın", posterShape: "landscape" } };
+            return { meta: { id, type: 'tv', name: data.title, poster: data.image, description: data.description || "Kesintisiz Yayın", posterShape: "landscape" } };
         }
 
         if (type === 'movie') {
-            return { meta: { id, type: 'movie', name: data.title, poster: data.image, description: data.description || data.resume, releaseInfo: data.year?.toString() } };
+            return { meta: { id, type: 'movie', name: data.title, poster: data.image, description: data.description || "Film özeti bulunamadı.", releaseInfo: data.year?.toString() } };
         }
 
-        // DİZİLER İÇİN (Sezon verisinden beslenir)
-        const mainData = Array.isArray(data) ? data[0] : data;
+        // --- DİZİ DÜZENLEME (İsim ve Açıklama Buradan Gelir) ---
         const videos = [];
+        const firstSeason = Array.isArray(data) ? data[0] : data;
+        
+        // Bazı API yanıtlarında serie_title/serie_description olarak gelir
+        const serieTitle = firstSeason?.serie_title || firstSeason?.title || "Dizi";
+        const serieDescription = firstSeason?.serie_description || firstSeason?.description || firstSeason?.resume || "Açıklama bulunamadı.";
+
         if (Array.isArray(data)) {
             data.forEach(s => {
-                const sNum = parseInt((s.title?.match(/\d+/) || [1])[0]);
+                const sNum = parseInt((s.title.match(/\d+/) || [1])[0]);
                 if (s.episodes) {
                     s.episodes.forEach(ep => {
-                        const eNum = parseInt((ep.title?.match(/\d+/) || [1])[0]);
+                        const eNum = parseInt((ep.title.match(/\d+/) || [1])[0]);
                         videos.push({
                             id: `${id}:${sNum}:${eNum}`,
                             title: ep.title || `${eNum}. Bölüm`,
-                            description: ep.description || mainData?.description || mainData?.resume,
+                            description: ep.description || serieDescription, // Bölüm açıklaması boşsa dizi açıklamasını bas
                             season: sNum,
                             episode: eNum,
-                            poster: ep.image || mainData?.image,
+                            poster: ep.image || firstSeason?.image,
                             released: new Date().toISOString()
                         });
                     });
@@ -143,19 +164,20 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
         return {
             meta: {
-                id, type: 'series',
-                name: mainData?.serie_title || mainData?.title || "Dizi",
-                poster: mainData?.image || "",
-                background: mainData?.cover || mainData?.image || "",
+                id, 
+                type: 'series',
+                name: serieTitle,
+                poster: firstSeason?.image || "",
+                background: firstSeason?.cover || firstSeason?.image || "",
                 videos: videos,
-                description: mainData?.serie_description || mainData?.description || mainData?.resume || "",
-                releaseInfo: mainData?.year?.toString() || ""
+                description: serieDescription,
+                releaseInfo: firstSeason?.year?.toString() || ""
             }
         };
     } catch (e) { return { meta: {} }; }
 });
 
-// --- 3. STREAM İŞLEYİCİ ---
+// --- 3. YAYIN İŞLEYİCİ ---
 builder.defineStreamHandler(async ({ id }) => {
     const parts = id.split(':');
     const cleanId = getCleanId(parts[0]);
@@ -163,24 +185,27 @@ builder.defineStreamHandler(async ({ id }) => {
     const headers = { ...HEADERS, 'Authorization': `Bearer ${token}` };
 
     try {
-        let sources = [];
+        let sources = [], contentTitle = "Yayın";
         if (id.startsWith('CH_')) {
             const data = await (await fetch(`${BASE_URL}/api/channel/by/${cleanId}/${SW_KEY}/`, { headers })).json();
+            contentTitle = data.title;
             sources = data.sources || (data.url ? [{ url: data.url }] : []);
         } else if (!id.includes(':')) {
             const data = await (await fetch(`${BASE_URL}/api/movie/by/${cleanId}/${SW_KEY}/`, { headers })).json();
+            contentTitle = data.title;
             sources = data.sources || [];
         } else {
             const data = await (await fetch(`${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`, { headers })).json();
-            const season = data.find(s => (s.title?.match(/\d+/) || [])[0] == parts[1]);
-            const episode = season?.episodes.find(e => (e.title?.match(/\d+/) || [])[0] == parts[2]);
+            const season = data.find(s => (s.title.match(/\d+/) || [])[0] == parts[1]);
+            const episode = season?.episodes.find(e => (e.title.match(/\d+/) || [])[0] == parts[2]);
+            contentTitle = episode?.title;
             sources = episode?.sources || [];
         }
 
         return {
             streams: sources.map(src => ({
-                name: "RECTV",
-                title: `${src.title || 'HD'}`,
+                name: contentTitle,
+                title: `RECTV | ${src.size || "HD"} | ${(src.title || "").toLowerCase().includes("dublaj") ? "🇹🇷" : "🌐"} ${src.title || ""}`,
                 url: src.url,
                 behaviorHints: { notWebReady: true, proxyHeaders: { "request": PLAYER_HEADERS } }
             }))
