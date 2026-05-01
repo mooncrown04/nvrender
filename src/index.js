@@ -40,7 +40,7 @@ const manifest = {
     id: "com.mooncrown.rectv.v23",
     version: "8.5.0",
     name: "RECTV Ultimate Fix1",
-    description: "dizi-film",
+    description: "dizi-film1",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
     idPrefixes: ["rectv_", "tt", "CH_", "tmdb:"],
