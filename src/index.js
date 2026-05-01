@@ -36,9 +36,9 @@ const PLAYER_HEADERS = {
 // --- ADDON MANİFESTOSU ---
 const manifest = {
     id: "com.mooncrown.rectv.v23",
-    version: "8.5.1",
+    version: "8.5.2",
     name: "RECTV Ultimate Fix",
-    description: "dizi-film",
+    description: "dizi-film55",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
     idPrefixes: ["rectv_", "tt", "CH_", "tmdb:"],
@@ -126,27 +126,33 @@ builder.defineMetaHandler(async ({ type, id }) => {
         const data = await res.json();
 
         if (id.startsWith('CH_') || type === 'tv') {
-            return { meta: { id, type: 'tv', name: data.title, poster: data.image, description: data.description || "Kesintisiz Yayın", posterShape: "landscape" } };
+            return { meta: { id, type: 'tv', name: data.title, poster: data.image, description: data.description || "Canlı Yayın", posterShape: "landscape" } };
         }
 
         if (type === 'movie') {
             return { meta: { id, type: 'movie', name: data.title, poster: data.image, description: data.description || "Film özeti bulunamadı.", releaseInfo: data.year?.toString() } };
         }
 
-        // DİZİ KISMI (Açıklama düzeltildi)
+        // --- DİZİ (SERIES) DÜZELTİLMİŞ KISIM ---
         const videos = [];
-        const mainData = Array.isArray(data) ? data[0] : data;
+        const isDataArray = Array.isArray(data);
+        const mainData = isDataArray ? data[0] : data;
 
-        if (Array.isArray(data)) {
+        // Sezon içinde description yoksa, RECTV API'sinde genellikle 'serie_description' anahtarında bulunur.
+        const seriesDesc = mainData?.serie_description || mainData?.description || mainData?.resume || "Dizi açıklaması bulunmamaktadır.";
+        const seriesTitle = mainData?.serie_title || mainData?.title || "Dizi";
+
+        if (isDataArray) {
             data.forEach(s => {
-                const sNum = parseInt((s.title.match(/\d+/) || [1])[0]);
-                if (s.episodes) {
+                const sNum = parseInt((s.title?.match(/\d+/) || [1])[0]);
+                if (s.episodes && Array.isArray(s.episodes)) {
                     s.episodes.forEach(ep => {
-                        const eNum = parseInt((ep.title.match(/\d+/) || [1])[0]);
+                        const eNum = parseInt((ep.title?.match(/\d+/) || [1])[0]);
                         videos.push({
                             id: `${id}:${sNum}:${eNum}`,
                             title: ep.title || `${eNum}. Bölüm`,
-                            description: ep.description || mainData?.description || "Bölüm detayı bulunamadı.",
+                            // Bölüm özeti yoksa ana dizi özetini basıyoruz
+                            description: ep.description || seriesDesc,
                             season: sNum,
                             episode: eNum,
                             poster: ep.image || mainData?.image,
@@ -159,13 +165,16 @@ builder.defineMetaHandler(async ({ type, id }) => {
 
         return {
             meta: {
-                id, type: 'series',
-                name: mainData?.title || "Dizi",
+                id: id,
+                type: 'series',
+                name: seriesTitle,
                 poster: mainData?.image || "",
                 background: mainData?.cover || mainData?.image || "",
+                logo: mainData?.image || "",
                 videos: videos,
-                description: mainData?.description || "Dizi açıklaması bulunamadı.",
-                releaseInfo: mainData?.year?.toString() || ""
+                description: seriesDesc,
+                releaseInfo: mainData?.year?.toString() || "",
+                genres: (mainData?.genres || []).map(g => g.title || g)
             }
         };
     } catch (e) { return { meta: {} }; }
@@ -190,8 +199,8 @@ builder.defineStreamHandler(async ({ id }) => {
             sources = data.sources || [];
         } else {
             const data = await (await fetch(`${BASE_URL}/api/season/by/serie/${cleanId}/${SW_KEY}/`, { headers })).json();
-            const season = data.find(s => (s.title.match(/\d+/) || [])[0] == parts[1]);
-            const episode = season?.episodes.find(e => (e.title.match(/\d+/) || [])[0] == parts[2]);
+            const season = data.find(s => (s.title?.match(/\d+/) || [])[0] == parts[1]);
+            const episode = season?.episodes.find(e => (e.title?.match(/\d+/) || [])[0] == parts[2]);
             contentTitle = episode?.title;
             sources = episode?.sources || [];
         }
