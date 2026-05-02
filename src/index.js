@@ -39,7 +39,7 @@ const PLAYER_HEADERS = {
 const manifest = {
     id: "com.mooncrown.rectv.v23",
     version: "8.5.0",
-    name: "RECTV Ultimate Fix",
+    name: "RECTV Ultimate",
     description: "dizi-film",
     resources: ["catalog", "meta", "stream"],
     types: ["movie", "series", "tv"],
@@ -191,8 +191,6 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     }
 });
 
-// --- 2. META VERİ İŞLEYİCİ (Meta Handler) ---
-
 // --- 2. META VERİ İŞLEYİCİ (Meta Handler) - DÜZELTİLMİŞ ---
 
 builder.defineMetaHandler(async ({ type, id }) => {
@@ -222,7 +220,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
                     name: data.title || "Canlı Kanal",
                     poster: data.image,
                    // logo: data.image,
-                    background: data.cover || data.image,
+                    background: data.image,
                     description: data.description || `${data.title || ""} Kesintisiz Canlı Yayın`,
                     posterShape: "landscape"
                 }
@@ -265,7 +263,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
                             id: `${id}:${sNum}:${eNum}`,
                             title: ep.title || `${eNum}. Bölüm`,
                             // Bölüm özeti yoksa ana dizi özetini basar
-                            description: ep.description || mainData?.description || "Bölüm açıklaması bulunmuyor.",
+                            description:  mainData?.description || "Bölüm açıklaması bulunmuyor.",
                             poster: ep.image || mainData?.image,
                             background: ep.cover || ep.image || mainData?.cover,
                             season: sNum,
