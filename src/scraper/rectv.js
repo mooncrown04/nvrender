@@ -1,5 +1,6 @@
 /* --- scraper/rectv.js --- */
-var BASE_URL = "https://a.prectv70.lol";
+//var BASE_URL = "https://a.prectv70.lol";
+var BASE_URL = "https://load.prectv63.lol";
 var SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
 var TMDB_KEY = "4ef0d7355d9ffb5151e987764708ce96";
 
