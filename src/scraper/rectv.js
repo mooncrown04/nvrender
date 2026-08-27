@@ -1,5 +1,5 @@
 /* --- scraper/rectv.js --- */
- var BASE_URL = "https://m.prectv50.sbs"
+ var BASE_URL = "https://a.prectv70.lol"
 
 //var SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
 
