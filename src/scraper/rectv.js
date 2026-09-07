@@ -1,6 +1,8 @@
 /* --- scraper/rectv.js --- */
 import crypto from 'crypto';
+
 console.error("[SCRAPER_TEST] RECTV dosyasi yuklendi!");
+
 var BASE_URL = "https://a.prectv70.lol";
 var SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
 var HMAC_KEY = "3508611138826751fdf77beaa6f93eb93fd27e6a5acb910e7aad22665513dd6e";
@@ -82,16 +84,69 @@ function analyzeStream(url, index, itemLabel) {
 
 export async function getStreams(mediaType, id) {
     const parts = id.split(':');
-    const imdbId = parts[0];
+    const rawId = parts[0];
     const seasonNum = parts[1] || null;
     const episodeNum = parts[2] || null;
     const isSerie = !!seasonNum;
 
-    console.error(`[SCRAPER] Tetiklendi: ${imdbId} | Tip: ${mediaType} | S:${seasonNum} E:${episodeNum}`);
+    console.error(`[SCRAPER] Tetiklendi: ${id} | Tip: ${mediaType} | S:${seasonNum} E:${episodeNum}`);
 
     try {
-        // 1. TMDB ÜZERİNDEN İSİM BULMA
-        const tmdbUrl = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${TMDB_KEY}&external_source=imdb_id&language=tr-TR`;
+        let title = "";
+
+        // Nuvio'dan gelen ID rectv_ formatındaysa (örn: rectv_series_11091), TMDB adımlarını atlayıp doğrudan işlem yapabiliriz
+        if (rawId.startsWith("rectv_")) {
+            // Dahili ID'den sayısal RECTV ID'sini çıkar (örn: rectv_series_11091 -> 11091)
+            const numericId = rawId.split('_').pop();
+            console.error(`[SCRAPER] Doğrudan RECTV ID kullanılıyor: ${numericId}`);
+
+            let finalResults = [];
+
+            if (isSerie) {
+                const seasonPath = `/api/season/by/serie/${numericId}/${SW_KEY}/`;
+                const seasonHeaders = await signedHeaders("GET", seasonPath);
+                const seasonRes = await fetch(`${BASE_URL}${seasonPath}`, { headers: seasonHeaders });
+                const seasons = await seasonRes.json();
+                
+                for (let s of seasons) {
+                    if (parseInt(s.title.match(/\d+/) || 0) == seasonNum) {
+                        for (let ep of (s.episodes || [])) {
+                            if (parseInt(ep.title.match(/\d+/) || 0) == episodeNum) {
+                                (ep.sources || []).forEach((src, idx) => {
+                                    const info = analyzeStream(src.url, idx, ep.label || s.title);
+                                    finalResults.push({
+                                        name: "RECTV",
+                                        title: `[S${seasonNum}E${episodeNum}] Kaynak ${idx + 1} | ${info.icon} ${info.text}`,
+                                        url: src.url
+                                    });
+                                });
+                            }
+                        }
+                    }
+                }
+            } else {
+                const detPath = `/api/movie/${numericId}/${SW_KEY}/`;
+                const detHeaders = await signedHeaders("GET", detPath);
+                const detRes = await fetch(`${BASE_URL}${detPath}`, { headers: detHeaders });
+                const detData = await detRes.json();
+                const sources = detData.sources || (Array.isArray(detData) ? detData : []);
+
+                sources.forEach((src, idx) => {
+                    const info = analyzeStream(src.url, idx, "");
+                    finalResults.push({
+                        name: "RECTV",
+                        title: `Film Kaynağı ${idx + 1} | ${info.icon} ${info.text}`,
+                        url: src.url
+                    });
+                });
+            }
+
+            console.error(`[SCRAPER] Tamamlandı (Direkt ID). Bulunan Link: ${finalResults.length}`);
+            return finalResults.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
+        }
+
+        // Standart TMDB Akışı (IMDB ID ile gelenler için)
+        const tmdbUrl = `https://api.themoviedb.org/3/find/${rawId}?api_key=${TMDB_KEY}&external_source=imdb_id&language=tr-TR`;
         const tmdbRes = await fetch(tmdbUrl);
         const tmdbData = await tmdbRes.json();
         
@@ -99,25 +154,22 @@ export async function getStreams(mediaType, id) {
                      (tmdbData.tv_results && tmdbData.tv_results[0]);
 
         if (!meta) {
-            console.error(`[SCRAPER] TMDB'de kayıt bulunamadı: ${imdbId}`);
+            console.error(`[SCRAPER] TMDB'de kayıt bulunamadı: ${rawId}`);
             return [];
         }
 
-        const title = meta.title || meta.name;
+        title = meta.title || meta.name;
         console.error(`[SCRAPER] Aranan İsim: ${title}`);
 
-        // 2. RECTV ARAMA VE İMZALI İSTEK
+        // RECTV ARAMA VE İMZALI İSTEK
         const searchPath = `/api/search/${encodeURIComponent(title)}/${SW_KEY}/`;
         const searchHeaders = await signedHeaders("GET", searchPath);
         const sRes = await fetch(`${BASE_URL}${searchPath}`, { headers: searchHeaders });
         const sData = await sRes.json();
         
-        // Kotlin kodundaki gibi channels ve posters birleştiriliyor
         const allItems = (sData.channels || []).concat(sData.posters || []);
-
         let finalResults = [];
 
-        // 3. EŞLEŞEN İÇERİĞİ BUL VE LİNKLERİ AL
         for (let target of allItems) {
             const targetTitle = (target.title || "").toLowerCase();
             const searchTitle = title.toLowerCase();
