@@ -29,7 +29,7 @@ async function getAuthToken() {
     } catch (e) { return null; }
 }
 
-// ---- HMAC İmzalama (Güncel API yapısı için zorunlu) ----
+// ---- HMAC İmzalama ----
 function sha256Hex(data) {
     return crypto.createHash('sha256').update(data, 'utf8').digest('hex');
 }
@@ -81,12 +81,11 @@ function analyzeStream(url, index, itemLabel) {
 }
 
 export async function getStreams(mediaType, id) {
-    /* BILGI NOTU: Gelen ID parçalanıyor (tt123:1:1 veya rectv_series_123:1:1 ya da tt123) */
     const parts = id.split(':');
     let imdbId = parts[0];
     const seasonNum = parts[1] || null;
     const episodeNum = parts[2] || null;
-    const isSerie = !!seasonNum; // Sezon numarası varsa dizidir
+    const isSerie = !!seasonNum;
 
     console.error(`[SCRAPER] Tetiklendi: ${id} | Tip: ${mediaType} | S:${seasonNum} E:${episodeNum}`);
 
@@ -94,12 +93,10 @@ export async function getStreams(mediaType, id) {
         let title = "";
         let directNumericId = null;
 
-        // Eğer Nuvio/Uygulama doğrudan rectv ID'si gönderdiyse TMDB'yi atla
         if (imdbId.startsWith("rectv_")) {
             directNumericId = imdbId.split('_').pop();
             console.error(`[SCRAPER] Doğrudan RECTV ID kullanılıyor: ${directNumericId}`);
         } else {
-            // 1. TMDB ÜZERİNDEN İSİM BULMA
             const tmdbUrl = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${TMDB_KEY}&external_source=imdb_id&language=tr-TR`;
             const tmdbRes = await fetch(tmdbUrl);
             const tmdbData = await tmdbRes.json();
@@ -109,7 +106,11 @@ export async function getStreams(mediaType, id) {
 
             if (!meta) {
                 console.error(`[SCRAPER] TMDB'de kayıt bulunamadı: ${imdbId}`);
-                return [];
+                return [{
+                    name: "RECTV",
+                    title: `HATA: TMDB'de kayıt bulunamadı (${imdbId})`,
+                    url: "https://hata.alindi"
+                }];
             }
 
             title = meta.title || meta.name;
@@ -118,7 +119,6 @@ export async function getStreams(mediaType, id) {
 
         let finalResults = [];
 
-        // Eğer doğrudan ID varsa arama adımını atlayıp direkt detay/sezon çekebiliriz
         if (directNumericId) {
             if (isSerie) {
                 const seasonPath = `/api/season/by/serie/${directNumericId}/${SW_KEY}/`;
@@ -159,16 +159,13 @@ export async function getStreams(mediaType, id) {
                 });
             }
         } else {
-            // 2. RECTV ARAMA VE İMZALI İSTEK
             const searchPath = `/api/search/${encodeURIComponent(title)}/${SW_KEY}/`;
             const searchHeaders = await signedHeaders("GET", searchPath);
             const sRes = await fetch(`${BASE_URL}${searchPath}`, { headers: searchHeaders });
             const sData = await sRes.json();
             
-            // Eski çalışan koddaki gibi seriler ve posterler birleştiriliyor
             const allItems = (sData.series || []).concat(sData.posters || []).concat(sData.channels || []);
 
-            // 3. EŞLEŞEN İÇERİĞİ BUL VE LİNKLERİ AL
             for (let target of allItems) {
                 const targetTitle = (target.title || "").toLowerCase();
                 const searchTitle = title.toLowerCase();
@@ -185,7 +182,7 @@ export async function getStreams(mediaType, id) {
                         if (parseInt(s.title.match(/\d+/) || 0) == seasonNum) {
                             for (let ep of (s.episodes || [])) {
                                 if (parseInt(ep.title.match(/\d+/) || 0) == episodeNum) {
-                                    (ep.sources || []).groupby ? null : (ep.sources || []).forEach((src, idx) => {
+                                    (ep.sources || []).forEach((src, idx) => {
                                         const info = analyzeStream(src.url, idx, ep.label || s.title);
                                         finalResults.push({
                                             name: "RECTV",
@@ -217,10 +214,23 @@ export async function getStreams(mediaType, id) {
         }
 
         console.error(`[SCRAPER] Tamamlandı. Bulunan Link: ${finalResults.length}`);
+        
+        if (finalResults.length === 0) {
+            return [{
+                name: "RECTV",
+                title: `HATA: İçerik bulunamadı veya eşleşmedi (${title})`,
+                url: "https://hata.alindi"
+            }];
+        }
+
         return finalResults.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
 
     } catch (err) {
         console.error(`[SCRAPER_ERROR] Hata: ${err.message}`);
-        return [];
+        return [{
+            name: "RECTV",
+            title: `HATA: ${err.message}`,
+            url: "https://hata.alindi"
+        }];
     }
 }
