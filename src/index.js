@@ -139,12 +139,13 @@ async function signedHeaders(method, path, body = "") {
 
 function getCleanId(id) {
     if (!id) return "";
-    return id.split(':').shift()
+    return id.toString().split(':').shift()
              .replace('rectv_movie_', '')
              .replace('rectv_series_', '')
+             .replace('rectv_tv_', '')
              .replace('tmdb:', '')
              .replace('tt', '')
-             .split('_').pop();
+             .replace(/\D/g, ''); // Sadece rakamları alarak bozulmaları önler
 }
 
 // --- 1. KATALOG İŞLEYİCİ (Catalog Handler) ---
