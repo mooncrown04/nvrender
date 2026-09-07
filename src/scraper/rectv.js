@@ -1,5 +1,4 @@
 /* --- scraper/rectv.js --- */
-import crypto from 'crypto';
 
 var BASE_URL = "https://a.prectv70.lol";
 var SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
@@ -29,21 +28,36 @@ async function getAuthToken() {
     } catch (e) { return null; }
 }
 
-// ---- HMAC İmzalama ----
-function sha256Hex(data) {
-    return crypto.createHash('sha256').update(data, 'utf8').digest('hex');
+// ---- Web Crypto API (Tarayıcı / Android Uyumlu HMAC İmzalama) ----
+async function sha256Hex(data) {
+    const msgBuffer = new TextEncoder().encode(data);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-function hmacSha256Hex(key, message) {
-    return crypto.createHmac('sha256', Buffer.from(key, 'utf8')).update(message, 'utf8').digest('hex');
+async function hmacSha256Hex(key, message) {
+    const enc = new TextEncoder();
+    const cryptoKey = await crypto.subtle.importKey(
+        "raw",
+        enc.encode(key),
+        { name: "HMAC", hash: { name: "SHA-256" } },
+        false,
+        ["sign"]
+    );
+    const signature = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(message));
+    return Array.from(new Uint8Array(signature)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 async function signedHeaders(method, path, body = "") {
     const ts = Math.floor(Date.now() / 1000).toString();
-    const nonce = crypto.randomUUID();
-    const bodyHash = sha256Hex(body);
+    const nonce = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+    const bodyHash = await sha256Hex(body);
     const message = `${method}\n${path}\n${ts}\n${nonce}\n${bodyHash}`;
-    const signature = hmacSha256Hex(HMAC_KEY, message);
+    const signature = await hmacSha256Hex(HMAC_KEY, message);
 
     const token = await getAuthToken();
 
@@ -87,15 +101,12 @@ export async function getStreams(mediaType, id) {
     const episodeNum = parts[2] || null;
     const isSerie = !!seasonNum;
 
-    console.error(`[SCRAPER] Tetiklendi: ${id} | Tip: ${mediaType} | S:${seasonNum} E:${episodeNum}`);
-
     try {
         let title = "";
         let directNumericId = null;
 
         if (imdbId.startsWith("rectv_")) {
             directNumericId = imdbId.split('_').pop();
-            console.error(`[SCRAPER] Doğrudan RECTV ID kullanılıyor: ${directNumericId}`);
         } else {
             const tmdbUrl = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${TMDB_KEY}&external_source=imdb_id&language=tr-TR`;
             const tmdbRes = await fetch(tmdbUrl);
@@ -105,7 +116,6 @@ export async function getStreams(mediaType, id) {
                          (tmdbData.tv_results && tmdbData.tv_results[0]);
 
             if (!meta) {
-                console.error(`[SCRAPER] TMDB'de kayıt bulunamadı: ${imdbId}`);
                 return [{
                     name: "RECTV",
                     title: `HATA: TMDB'de kayıt bulunamadı (${imdbId})`,
@@ -114,7 +124,6 @@ export async function getStreams(mediaType, id) {
             }
 
             title = meta.title || meta.name;
-            console.error(`[SCRAPER] Aranan İsim: ${title}`);
         }
 
         let finalResults = [];
@@ -212,8 +221,6 @@ export async function getStreams(mediaType, id) {
                 }
             }
         }
-
-        console.error(`[SCRAPER] Tamamlandı. Bulunan Link: ${finalResults.length}`);
         
         if (finalResults.length === 0) {
             return [{
@@ -226,7 +233,6 @@ export async function getStreams(mediaType, id) {
         return finalResults.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
 
     } catch (err) {
-        console.error(`[SCRAPER_ERROR] Hata: ${err.message}`);
         return [{
             name: "RECTV",
             title: `HATA: ${err.message}`,
