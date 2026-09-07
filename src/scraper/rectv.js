@@ -1,6 +1,6 @@
 /* --- scraper/rectv.js --- */
 import crypto from 'crypto';
-
+console.error("[SCRAPER_TEST] RECTV dosyasi yuklendi!");
 var BASE_URL = "https://a.prectv70.lol";
 var SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
 var HMAC_KEY = "3508611138826751fdf77beaa6f93eb93fd27e6a5acb910e7aad22665513dd6e";
