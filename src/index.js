@@ -19,8 +19,6 @@ const SERIES_MAP = {"ABC": "59","Aksiyon": "1","Aksiyon & Macera": "31","Adult S
 
 const TV_MAP = { "Spor": "1", "Belgesel": "2", "Ulusal": "3", "Haber": "4", "Sinema": "6" };
 
-const YEARS = Array.from({ length: 30 }, (_, i) => (2026 - i).toString());
-
 // --- YAPILANDIRMA AYARLARI ---
 const PORT = process.env.PORT || 7010;
 const BASE_URL = "https://a.prectv70.lol";
@@ -33,12 +31,6 @@ const HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
     'Referer': 'https://twitter.com/',
     'Accept': 'application/json'
-};
-
-const PLAYER_HEADERS = {
-    'User-Agent': 'googleusercontent',
-    'Referer': 'https://twitter.com/',
-    'Accept-Encoding': 'identity'
 };
 
 // --- ADDON MANİFESTOSU ---
@@ -381,6 +373,7 @@ builder.defineStreamHandler(async ({ id }) => {
         }
 
         console.error(`[STREAM_RESULT] Bulunan kaynak sayısı: ${sources.length}`);
+        
         return {
             streams: sources.map(src => {
                 let languageIcon = "";
@@ -393,12 +386,18 @@ builder.defineStreamHandler(async ({ id }) => {
                 }
 
                 return {
-                    name: contentTitle, 
-                    title: `RECTV | ${src.size || "HD"} | ${languageIcon}${src.title || ""}`,
+                    name: `RECTV`,
+                    title: `${contentTitle} | ${src.size || "HD"} | ${languageIcon}${src.title || ""}`,
                     url: src.url,
                     behaviorHints: { 
                         notWebReady: true, 
-                        proxyHeaders: { "request": PLAYER_HEADERS } 
+                        proxyHeaders: { 
+                            request: {
+                                'User-Agent': 'googleusercontent',
+                                'Referer': 'https://twitter.com/',
+                                'Accept-Encoding': 'identity'
+                            } 
+                        } 
                     }
                 };
             })
