@@ -1,8 +1,6 @@
 /* --- scraper/rectv.js --- */
 import crypto from 'crypto';
 
-console.error("[SCRAPER_TEST] RECTV dosyasi yuklendi!");
-
 var BASE_URL = "https://a.prectv70.lol";
 var SW_KEY = "4F5A9C3D9A86FA54EACEDDD635185/c3c5bd17-e37b-4b94-a944-8a3688a30452";
 var HMAC_KEY = "3508611138826751fdf77beaa6f93eb93fd27e6a5acb910e7aad22665513dd6e";
@@ -11,7 +9,7 @@ var CLIENT_ID = "rectv-android";
 var TMDB_KEY = "4ef0d7355d9ffb5151e987764708ce96";
 
 var HEADERS = {
-    'User-Agent': 'googleusercontent',
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
     'Referer': 'https://twitter.com/',
     'Accept': 'application/json'
 };
@@ -31,7 +29,7 @@ async function getAuthToken() {
     } catch (e) { return null; }
 }
 
-// ---- HMAC İmzalama (Kotlin sürümüyle birebir uyumlu) ----
+// ---- HMAC İmzalama (Güncel API yapısı için zorunlu) ----
 function sha256Hex(data) {
     return crypto.createHash('sha256').update(data, 'utf8').digest('hex');
 }
@@ -83,27 +81,47 @@ function analyzeStream(url, index, itemLabel) {
 }
 
 export async function getStreams(mediaType, id) {
+    /* BILGI NOTU: Gelen ID parçalanıyor (tt123:1:1 veya rectv_series_123:1:1 ya da tt123) */
     const parts = id.split(':');
-    const rawId = parts[0];
+    let imdbId = parts[0];
     const seasonNum = parts[1] || null;
     const episodeNum = parts[2] || null;
-    const isSerie = !!seasonNum;
+    const isSerie = !!seasonNum; // Sezon numarası varsa dizidir
 
     console.error(`[SCRAPER] Tetiklendi: ${id} | Tip: ${mediaType} | S:${seasonNum} E:${episodeNum}`);
 
     try {
         let title = "";
+        let directNumericId = null;
 
-        // Nuvio'dan gelen ID rectv_ formatındaysa (örn: rectv_series_11091), TMDB adımlarını atlayıp doğrudan işlem yapabiliriz
-        if (rawId.startsWith("rectv_")) {
-            // Dahili ID'den sayısal RECTV ID'sini çıkar (örn: rectv_series_11091 -> 11091)
-            const numericId = rawId.split('_').pop();
-            console.error(`[SCRAPER] Doğrudan RECTV ID kullanılıyor: ${numericId}`);
+        // Eğer Nuvio/Uygulama doğrudan rectv ID'si gönderdiyse TMDB'yi atla
+        if (imdbId.startsWith("rectv_")) {
+            directNumericId = imdbId.split('_').pop();
+            console.error(`[SCRAPER] Doğrudan RECTV ID kullanılıyor: ${directNumericId}`);
+        } else {
+            // 1. TMDB ÜZERİNDEN İSİM BULMA
+            const tmdbUrl = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${TMDB_KEY}&external_source=imdb_id&language=tr-TR`;
+            const tmdbRes = await fetch(tmdbUrl);
+            const tmdbData = await tmdbRes.json();
+            
+            const meta = (tmdbData.movie_results && tmdbData.movie_results[0]) || 
+                         (tmdbData.tv_results && tmdbData.tv_results[0]);
 
-            let finalResults = [];
+            if (!meta) {
+                console.error(`[SCRAPER] TMDB'de kayıt bulunamadı: ${imdbId}`);
+                return [];
+            }
 
+            title = meta.title || meta.name;
+            console.error(`[SCRAPER] Aranan İsim: ${title}`);
+        }
+
+        let finalResults = [];
+
+        // Eğer doğrudan ID varsa arama adımını atlayıp direkt detay/sezon çekebiliriz
+        if (directNumericId) {
             if (isSerie) {
-                const seasonPath = `/api/season/by/serie/${numericId}/${SW_KEY}/`;
+                const seasonPath = `/api/season/by/serie/${directNumericId}/${SW_KEY}/`;
                 const seasonHeaders = await signedHeaders("GET", seasonPath);
                 const seasonRes = await fetch(`${BASE_URL}${seasonPath}`, { headers: seasonHeaders });
                 const seasons = await seasonRes.json();
@@ -125,7 +143,7 @@ export async function getStreams(mediaType, id) {
                     }
                 }
             } else {
-                const detPath = `/api/movie/${numericId}/${SW_KEY}/`;
+                const detPath = `/api/movie/${directNumericId}/${SW_KEY}/`;
                 const detHeaders = await signedHeaders("GET", detPath);
                 const detRes = await fetch(`${BASE_URL}${detPath}`, { headers: detHeaders });
                 const detData = await detRes.json();
@@ -140,79 +158,61 @@ export async function getStreams(mediaType, id) {
                     });
                 });
             }
+        } else {
+            // 2. RECTV ARAMA VE İMZALI İSTEK
+            const searchPath = `/api/search/${encodeURIComponent(title)}/${SW_KEY}/`;
+            const searchHeaders = await signedHeaders("GET", searchPath);
+            const sRes = await fetch(`${BASE_URL}${searchPath}`, { headers: searchHeaders });
+            const sData = await sRes.json();
+            
+            // Eski çalışan koddaki gibi seriler ve posterler birleştiriliyor
+            const allItems = (sData.series || []).concat(sData.posters || []).concat(sData.channels || []);
 
-            console.error(`[SCRAPER] Tamamlandı (Direkt ID). Bulunan Link: ${finalResults.length}`);
-            return finalResults.filter((v, i, a) => a.findIndex(t => (t.url === v.url)) === i);
-        }
+            // 3. EŞLEŞEN İÇERİĞİ BUL VE LİNKLERİ AL
+            for (let target of allItems) {
+                const targetTitle = (target.title || "").toLowerCase();
+                const searchTitle = title.toLowerCase();
 
-        // Standart TMDB Akışı (IMDB ID ile gelenler için)
-        const tmdbUrl = `https://api.themoviedb.org/3/find/${rawId}?api_key=${TMDB_KEY}&external_source=imdb_id&language=tr-TR`;
-        const tmdbRes = await fetch(tmdbUrl);
-        const tmdbData = await tmdbRes.json();
-        
-        const meta = (tmdbData.movie_results && tmdbData.movie_results[0]) || 
-                     (tmdbData.tv_results && tmdbData.tv_results[0]);
+                if (!targetTitle.includes(searchTitle) && !searchTitle.includes(targetTitle)) continue;
 
-        if (!meta) {
-            console.error(`[SCRAPER] TMDB'de kayıt bulunamadı: ${rawId}`);
-            return [];
-        }
-
-        title = meta.title || meta.name;
-        console.error(`[SCRAPER] Aranan İsim: ${title}`);
-
-        // RECTV ARAMA VE İMZALI İSTEK
-        const searchPath = `/api/search/${encodeURIComponent(title)}/${SW_KEY}/`;
-        const searchHeaders = await signedHeaders("GET", searchPath);
-        const sRes = await fetch(`${BASE_URL}${searchPath}`, { headers: searchHeaders });
-        const sData = await sRes.json();
-        
-        const allItems = (sData.channels || []).concat(sData.posters || []);
-        let finalResults = [];
-
-        for (let target of allItems) {
-            const targetTitle = (target.title || "").toLowerCase();
-            const searchTitle = title.toLowerCase();
-
-            if (!targetTitle.includes(searchTitle) && !searchTitle.includes(targetTitle)) continue;
-
-            if (isSerie && target.type === "serie") {
-                const seasonPath = `/api/season/by/serie/${target.id}/${SW_KEY}/`;
-                const seasonHeaders = await signedHeaders("GET", seasonPath);
-                const seasonRes = await fetch(`${BASE_URL}${seasonPath}`, { headers: seasonHeaders });
-                const seasons = await seasonRes.json();
-                
-                for (let s of seasons) {
-                    if (parseInt(s.title.match(/\d+/) || 0) == seasonNum) {
-                        for (let ep of (s.episodes || [])) {
-                            if (parseInt(ep.title.match(/\d+/) || 0) == episodeNum) {
-                                (ep.sources || []).forEach((src, idx) => {
-                                    const info = analyzeStream(src.url, idx, ep.label || s.title);
-                                    finalResults.push({
-                                        name: "RECTV",
-                                        title: `[S${seasonNum}E${episodeNum}] Kaynak ${idx + 1} | ${info.icon} ${info.text}`,
-                                        url: src.url
+                if (isSerie && (target.type === "serie" || target.type === "series")) {
+                    const seasonPath = `/api/season/by/serie/${target.id}/${SW_KEY}/`;
+                    const seasonHeaders = await signedHeaders("GET", seasonPath);
+                    const seasonRes = await fetch(`${BASE_URL}${seasonPath}`, { headers: seasonHeaders });
+                    const seasons = await seasonRes.json();
+                    
+                    for (let s of seasons) {
+                        if (parseInt(s.title.match(/\d+/) || 0) == seasonNum) {
+                            for (let ep of (s.episodes || [])) {
+                                if (parseInt(ep.title.match(/\d+/) || 0) == episodeNum) {
+                                    (ep.sources || []).groupby ? null : (ep.sources || []).forEach((src, idx) => {
+                                        const info = analyzeStream(src.url, idx, ep.label || s.title);
+                                        finalResults.push({
+                                            name: "RECTV",
+                                            title: `[S${seasonNum}E${episodeNum}] Kaynak ${idx + 1} | ${info.icon} ${info.text}`,
+                                            url: src.url
+                                        });
                                     });
-                                });
+                                }
                             }
                         }
                     }
-                }
-            } else if (!isSerie) {
-                const detPath = `/api/movie/${target.id}/${SW_KEY}/`;
-                const detHeaders = await signedHeaders("GET", detPath);
-                const detRes = await fetch(`${BASE_URL}${detPath}`, { headers: detHeaders });
-                const detData = await detRes.json();
-                const sources = detData.sources || (Array.isArray(detData) ? detData : []);
+                } else if (!isSerie) {
+                    const detPath = `/api/movie/${target.id}/${SW_KEY}/`;
+                    const detHeaders = await signedHeaders("GET", detPath);
+                    const detRes = await fetch(`${BASE_URL}${detPath}`, { headers: detHeaders });
+                    const detData = await detRes.json();
+                    const sources = detData.sources || (Array.isArray(detData) ? detData : []);
 
-                sources.forEach((src, idx) => {
-                    const info = analyzeStream(src.url, idx, target.label || "");
-                    finalResults.push({
-                        name: "RECTV",
-                        title: `Film Kaynağı ${idx + 1} | ${info.icon} ${info.text}`,
-                        url: src.url
+                    sources.forEach((src, idx) => {
+                        const info = analyzeStream(src.url, idx, target.label || "");
+                        finalResults.push({
+                            name: "RECTV",
+                            title: `Film Kaynağı ${idx + 1} | ${info.icon} ${info.text}`,
+                            url: src.url
+                        });
                     });
-                });
+                }
             }
         }
 
