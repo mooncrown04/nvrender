@@ -5,11 +5,11 @@
   "main": "src/index.js",
   "type": "module",
   "scripts": {
-    "start": "node addon.js"
+    "start": "node src/index.js"
   },
   "dependencies": {
     "node-fetch": "^3.3.2",
-    "stremio-addon-sdk": "^1.11.0"
+    "stremio-addon-sdk": "*"
   },
   "engines": {
     "node": ">=18.0.0"
